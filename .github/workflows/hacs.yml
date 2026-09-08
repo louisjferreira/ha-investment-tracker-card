@@ -5,29 +5,12 @@ on:
   pull_request:
   workflow_dispatch:
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
   validate-hacs:
     runs-on: ubuntu-latest
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-
-      - name: Apply temporary ISIN lookup patch
-        run: python scripts/fix_isin_lookup.py
-
-      - name: Commit ISIN lookup fix
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if ! git diff --quiet -- ha-investment-tracker-card.js; then
-            git add ha-investment-tracker-card.js
-            git commit -m "Fix browser-compatible ISIN lookup"
-            git push
-          fi
-
       - name: HACS validation
         uses: hacs/action@main
         with:
