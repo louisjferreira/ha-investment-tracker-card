@@ -28,6 +28,8 @@ The card currently supports:
 
 Each holding should use its ISIN as the primary identifier. The ticker/symbol is retained because a market-data provider generally needs a provider-specific symbol or instrument identifier to supply prices.
 
+**Important:** `invested` is entered in the holding's own `currency`. The card converts it into `display_currency` using `fx_rate_entity` when required.
+
 ```yaml
 type: custom:investment-tracker-card
 title: My Investments
@@ -38,7 +40,7 @@ holdings:
     name: CrowdStrike
     exchange: NASDAQ
     shares: 8
-    invested: 747.30
+    invested: 1007.96
     currency: USD
     price_entity: sensor.crowdstrike_price
     fx_rate_entity: sensor.usd_gbp
@@ -48,7 +50,7 @@ holdings:
     name: Palantir
     exchange: NYSE
     shares: 7
-    invested: 720.43
+    invested: 971.70
     currency: USD
     price_entity: sensor.palantir_price
     fx_rate_entity: sensor.usd_gbp
@@ -58,7 +60,7 @@ holdings:
     name: Amazon
     exchange: NASDAQ
     shares: 4
-    invested: 659.67
+    invested: 889.76
     currency: USD
     price_entity: sensor.amazon_price
     fx_rate_entity: sensor.usd_gbp
