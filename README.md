@@ -2,6 +2,8 @@
 
 A reusable Home Assistant Lovelace card for tracking stocks and ETFs with live Home Assistant price entities.
 
+![HACS validation](https://github.com/louisjferreira/ha-investment-tracker-card/actions/workflows/hacs.yml/badge.svg)
+
 ## Current development build
 
 The card currently supports:
