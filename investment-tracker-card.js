@@ -15,6 +15,8 @@ const CURRENCIES = [
   ['DKK', 'kr', 'Danish Krone'],
 ];
 
+const PERIODS = ['1D', '1W', '1M', '3M', '6M', '1Y', '5Y', 'MAX'];
+
 class InvestmentTrackerCard extends HTMLElement {
   setConfig(config) {
     if (!config || !Array.isArray(config.holdings)) {
@@ -41,14 +43,14 @@ class InvestmentTrackerCard extends HTMLElement {
   id(item) { return String(item.isin || item.id || item.symbol || item.name); }
 
   price(item) {
-    const entity = item.price_entity;
-    if (!entity || !this._hass) return null;
-    const value = Number.parseFloat(this._hass.states[entity]?.state);
+    if (!item?.price_entity || !this._hass) return null;
+    const value = Number.parseFloat(this._hass.states[item.price_entity]?.state);
     return Number.isFinite(value) ? value : null;
   }
 
   fx(item) {
-    if ((item.currency || this.config.display_currency) === this.config.display_currency) return 1;
+    const source = item.currency || this.config.display_currency;
+    if (source === this.config.display_currency) return 1;
     if (!item.fx_rate_entity || !this._hass) return null;
     const value = Number.parseFloat(this._hass.states[item.fx_rate_entity]?.state);
     return Number.isFinite(value) && value > 0 ? value : null;
@@ -109,7 +111,7 @@ class InvestmentTrackerCard extends HTMLElement {
     return `<div class="detail"><div class="detail-top">
       <div><div class="detail-value">${p.price === null ? '—' : this.money(p.price, item.currency || this.config.display_currency)}</div><div class="detail-label">Current price</div></div>
       <div class="detail-stat"><span>Invested</span><strong>${this.money(p.invested)}</strong></div><div class="detail-stat"><span>Value</span><strong>${p.current === null ? '—' : this.money(p.current)}</strong></div>
-    </div><div class="periods">${['1D','1W','1M','3M','6M','1Y','5Y','MAX'].map((x) => `<button class="period ${x === period ? 'selected' : ''}" data-period="${x}" type="button">${x}</button>`).join('')}</div>
+    </div><div class="periods">${PERIODS.map((x) => `<button class="period ${x === period ? 'selected' : ''}" data-period="${x}" type="button">${x}</button>`).join('')}</div>
     <div class="chart">${loading ? '<div class="chart-message">Loading history…</div>' : this.chart(history, item)}</div></div>`;
   }
 
@@ -182,6 +184,7 @@ class InvestmentTrackerCard extends HTMLElement {
 class InvestmentTrackerCardEditor extends HTMLElement {
   setConfig(config) {
     this.config = { title:'Investment Tracker', display_currency:'GBP', holdings:[], ...config };
+    this._search = {};
     this.render();
   }
 
@@ -189,29 +192,34 @@ class InvestmentTrackerCardEditor extends HTMLElement {
 
   render() {
     if (!this.shadowRoot) this.attachShadow({mode:'open'});
-    this.shadowRoot.innerHTML = `<style>
-      .wrap{display:flex;flex-direction:column;gap:14px;padding:8px 0}.field{display:flex;flex-direction:column;gap:5px}.label{font-size:12px;color:var(--secondary-text-color)}input,select{box-sizing:border-box;width:100%;padding:9px;border:1px solid var(--divider-color);border-radius:8px;background:var(--card-background-color);color:var(--primary-text-color);font:inherit}.holding{border:1px solid var(--divider-color);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:10px}.holding-head{display:flex;justify-content:space-between;align-items:center;font-weight:650}.remove{border:0;background:transparent;color:var(--error-color);cursor:pointer}.actions{display:flex;gap:8px}.actions button{border:0;border-radius:8px;padding:8px 12px;background:var(--primary-color);color:var(--text-primary-color,#fff);cursor:pointer}.hint{font-size:11px;color:var(--secondary-text-color);line-height:1.4}
-    </style><div class="wrap">
+    this.shadowRoot.innerHTML = `<style>${this.styles()}</style><div class="wrap">
       <div class="field"><div class="label">Card title</div><input id="title" value="${this.escape(this.config.title)}"></div>
       <div class="field"><div class="label">Portfolio display currency</div><select id="display_currency">${this.currencyOptions(this.config.display_currency)}</select></div>
       <div id="holdings">${this.config.holdings.map((h,i)=>this.holding(h,i)).join('')}</div>
       <div class="actions"><button id="add" type="button">Add holding</button></div>
-      <div class="hint">Use an ISIN as the security's primary identifier. The ticker is retained for market-data lookup. The editor will keep the selected security's ISIN, symbol and currency together.</div>
+      <div class="hint">Search an ISIN to identify the security. Select the returned instrument, then choose its trading currency. Market-price and FX entities remain configurable so the card stays provider-agnostic.</div>
     </div>`;
     this.bind();
   }
+
+  styles() { return `
+    .wrap{display:flex;flex-direction:column;gap:14px;padding:8px 0}.field{display:flex;flex-direction:column;gap:5px}.label{font-size:12px;color:var(--secondary-text-color)}input,select{box-sizing:border-box;width:100%;padding:9px;border:1px solid var(--divider-color);border-radius:8px;background:var(--card-background-color);color:var(--primary-text-color);font:inherit}.holding{border:1px solid var(--divider-color);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:10px}.holding-head{display:flex;justify-content:space-between;align-items:center;font-weight:650}.remove{border:0;background:transparent;color:var(--error-color);cursor:pointer}.actions{display:flex;gap:8px}.actions button,.search-button{border:0;border-radius:8px;padding:8px 12px;background:var(--primary-color);color:var(--text-primary-color,#fff);cursor:pointer}.search-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px}.search-button{white-space:nowrap}.search-status{font-size:11px;color:var(--secondary-text-color)}.results{display:flex;flex-direction:column;gap:5px}.result{width:100%;text-align:left;border:1px solid var(--divider-color);border-radius:8px;padding:8px;background:transparent;color:inherit;cursor:pointer}.result:hover{background:var(--secondary-background-color)}.result strong{display:block;font-size:12px}.result span{display:block;font-size:11px;color:var(--secondary-text-color);margin-top:2px}.hint{font-size:11px;color:var(--secondary-text-color);line-height:1.4}
+    @media(max-width:600px){.search-row{grid-template-columns:1fr}.search-button{width:100%}}
+  `; }
 
   currencyOptions(selected) { return CURRENCIES.map(([code,symbol,name]) => `<option value="${code}" ${code===selected?'selected':''}>${symbol} ${code} — ${name}</option>`).join(''); }
 
   holding(h,i) {
     const currency = h.currency || this.config.display_currency;
+    const search = this._search[i] || {};
+    const results = (search.results || []).map((r,index)=>`<button class="result" type="button" data-result-index="${index}"><strong>${this.escape(r.name || 'Unknown security')}</strong><span>${this.escape(r.ticker || 'No ticker')} · ${this.escape(r.exchangeCode || r.exchCode || 'Exchange unknown')} · ${this.escape(r.securityType || r.marketSector || 'Security')}</span></button>`).join('');
     return `<div class="holding" data-index="${i}"><div class="holding-head"><span>Holding ${i+1}</span><button class="remove" data-action="remove" type="button">Remove</button></div>
-      <div class="field"><div class="label">ISIN (primary security ID)</div><input data-key="isin" value="${this.escape(h.isin||'')}" placeholder="e.g. US0378331005"></div>
+      <div class="field"><div class="label">ISIN (primary security ID)</div><div class="search-row"><input data-key="isin" value="${this.escape(h.isin||'')}" placeholder="e.g. US0378331005"><button class="search-button" data-action="search" type="button">Search ISIN</button></div>${search.loading?'<div class="search-status">Searching security master…</div>':''}${search.error?`<div class="search-status">${this.escape(search.error)}</div>`:''}${results?`<div class="results">${results}</div>`:''}</div>
       <div class="field"><div class="label">Name</div><input data-key="name" value="${this.escape(h.name||'')}" placeholder="Apple Inc."></div>
       <div class="field"><div class="label">Ticker / symbol</div><input data-key="symbol" value="${this.escape(h.symbol||'')}" placeholder="AAPL"></div>
       <div class="field"><div class="label">Currency</div><select data-key="currency">${this.currencyOptions(currency)}</select></div>
       <div class="field"><div class="label">Shares / units</div><input data-key="shares" type="number" step="any" value="${this.escape(h.shares??0)}"></div>
-      <div class="field"><div class="label">Invested amount</div><input data-key="invested" type="number" step="0.01" value="${this.escape(h.invested??0)}"></div>
+      <div class="field"><div class="label">Invested amount (${this.escape(currency)})</div><input data-key="invested" type="number" step="0.01" value="${this.escape(h.invested??0)}"></div>
       <div class="field"><div class="label">Price entity</div><input data-key="price_entity" value="${this.escape(h.price_entity||'')}" placeholder="sensor.apple_price"></div>
       <div class="field"><div class="label">FX rate entity (source currency → portfolio currency)</div><input data-key="fx_rate_entity" value="${this.escape(h.fx_rate_entity||'')}" placeholder="sensor.usd_gbp"></div>
     </div>`;
@@ -220,9 +228,7 @@ class InvestmentTrackerCardEditor extends HTMLElement {
   bind() {
     this.shadowRoot.querySelector('#title').addEventListener('input', (e)=>this.commit({title:e.target.value}));
     this.shadowRoot.querySelector('#display_currency').addEventListener('change', (e)=>this.commit({display_currency:e.target.value}));
-    this.shadowRoot.querySelector('#add').addEventListener('click', ()=>{
-      this.commit({holdings:[...this.config.holdings,{isin:'',name:'',symbol:'',currency:this.config.display_currency,shares:0,invested:0,price_entity:'',fx_rate_entity:''}]});
-    });
+    this.shadowRoot.querySelector('#add').addEventListener('click', ()=>this.commit({holdings:[...this.config.holdings,{isin:'',name:'',symbol:'',currency:this.config.display_currency,shares:0,invested:0,price_entity:'',fx_rate_entity:''}]}));
     this.shadowRoot.querySelectorAll('.holding').forEach((row)=>{
       const i=Number(row.dataset.index);
       row.querySelectorAll('[data-key]').forEach((el)=>el.addEventListener(el.tagName==='SELECT'?'change':'input',()=>{
@@ -230,13 +236,42 @@ class InvestmentTrackerCardEditor extends HTMLElement {
         this.commit({holdings});
       }));
       row.querySelector('[data-action="remove"]').addEventListener('click',()=>this.commit({holdings:this.config.holdings.filter((_,idx)=>idx!==i)}));
+      row.querySelector('[data-action="search"]').addEventListener('click',()=>this.searchIsin(i));
+      row.querySelectorAll('[data-result-index]').forEach((button)=>button.addEventListener('click',()=>this.selectResult(i,Number(button.dataset.resultIndex))));
     });
   }
 
   parseValue(key,value){ if(key==='shares'||key==='invested') return Number(value)||0; return value; }
 
-  commit(changes){ this.config={...this.config,...changes}; this.dispatchEvent(new CustomEvent('config-changed',{detail:{config:this.config},bubbles:true,composed:true})); }
+  async searchIsin(index) {
+    const isin=String(this.config.holdings[index]?.isin||'').trim().toUpperCase();
+    if(!/^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(isin)) {
+      this._search[index]={error:'Enter a valid 12-character ISIN before searching.'}; this.render(); return;
+    }
+    this._search[index]={loading:true}; this.render();
+    try {
+      const response=await fetch('https://api.openfigi.com/v3/mapping',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify([{idType:'ID_ISIN',idValue:isin}])});
+      if(!response.ok) throw new Error(`Security lookup returned HTTP ${response.status}.`);
+      const payload=await response.json();
+      const results=Array.isArray(payload?.[0]?.data)?payload[0].data:[];
+      if(!results.length) throw new Error('No security was found for that ISIN.');
+      this._search[index]={results:results.slice(0,10)};
+    } catch(err) {
+      console.warn('Investment Tracker Card ISIN lookup error',err);
+      this._search[index]={error:err.message||'Security lookup failed.'};
+    }
+    this.render();
+  }
 
+  selectResult(index,resultIndex) {
+    const result=this._search[index]?.results?.[resultIndex];
+    if(!result) return;
+    const holdings=this.config.holdings.map((h,i)=>i===index?{...h,name:result.name||h.name,symbol:result.ticker||h.symbol,exchange:result.exchangeCode||result.exchCode||h.exchange}:h);
+    this.commit({holdings});
+    this._search[index]={};
+  }
+
+  commit(changes){ this.config={...this.config,...changes}; this.dispatchEvent(new CustomEvent('config-changed',{detail:{config:this.config},bubbles:true,composed:true})); }
   escape(value){ return String(value).replace(/[&<>"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 }
 
