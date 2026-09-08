@@ -1,9 +1,13 @@
 class InvestmentTrackerCard extends HTMLElement {
   setConfig(config) {
     if (!config || !Array.isArray(config.holdings)) {
-      throw new Error('Please provide a holdings array.');
+      throw new Error('Investment Tracker Card requires a holdings array.');
     }
-    this.config = config;
+    this.config = { title: 'Investment Tracker', display_currency: 'GBP', ...config };
+    this._expanded = null;
+    this._periods = {};
+    this._history = {};
+    this._loading = {};
     this.render();
   }
 
@@ -12,83 +16,148 @@ class InvestmentTrackerCard extends HTMLElement {
     if (this.config) this.render();
   }
 
-  getCardSize() {
-    return 4;
+  getCardSize() { return Math.max(4, 3 + (this.config?.holdings?.length || 0) * 2); }
+
+  id(item) { return String(item.id || item.symbol || item.name); }
+
+  price(item) {
+    const entity = item.price_entity;
+    if (!entity || !this._hass) return null;
+    const state = this._hass.states[entity];
+    const value = Number.parseFloat(state?.state);
+    return Number.isFinite(value) ? value : null;
+  }
+
+  fx(item) {
+    if ((item.currency || this.config.display_currency) === this.config.display_currency) return 1;
+    if (!item.fx_rate_entity || !this._hass) return null;
+    const value = Number.parseFloat(this._hass.states[item.fx_rate_entity]?.state);
+    return Number.isFinite(value) && value > 0 ? value : null;
+  }
+
+  position(item) {
+    const shares = Number(item.shares) || 0;
+    const invested = Number(item.invested) || 0;
+    const price = this.price(item);
+    const fx = this.fx(item);
+    const current = price === null || fx === null ? null : shares * price * fx;
+    const gain = current === null ? null : current - invested;
+    const gainPct = current === null || !invested ? null : gain / invested * 100;
+    return { shares, invested, price, fx, current, gain, gainPct };
+  }
+
+  totals() {
+    return this.config.holdings.reduce((out, item) => {
+      const p = this.position(item);
+      out.invested += p.invested;
+      if (p.current === null) out.missing += 1; else out.current += p.current;
+      return out;
+    }, { invested: 0, current: 0, missing: 0 });
   }
 
   render() {
     if (!this.shadowRoot) this.attachShadow({ mode: 'open' });
-
-    const holdings = this.config.holdings || [];
-    const rows = holdings.map((holding) => `
-      <div class="holding" data-symbol="${this.escape(holding.symbol)}">
-        <div class="summary">
-          <div>
-            <div class="name">${this.escape(holding.name || holding.symbol)}</div>
-            <div class="meta">${this.escape(String(holding.shares ?? 0))} shares · Invested ${this.money(holding.invested, holding.currency || 'GBP')}</div>
-          </div>
-          <div class="value">—</div>
-          <div class="gain">—</div>
-          <button type="button" aria-label="Show chart for ${this.escape(holding.name || holding.symbol)}">⌄</button>
-        </div>
-        <div class="chart-panel" hidden>
-          <div class="periods">
-            ${['1D','1W','1M','3M','6M','1Y','5Y','MAX'].map((p) => `<button type="button" data-period="${p}">${p}</button>`).join('')}
-          </div>
-          <div class="chart-placeholder">Market data will appear here.</div>
-        </div>
-      </div>
-    `).join('');
-
-    this.shadowRoot.innerHTML = `
-      <style>
-        :host { display:block; }
-        .card { padding: 16px; border-radius: 16px; background: var(--ha-card-background, var(--card-background-color, #fff)); color: var(--primary-text-color); box-shadow: var(--ha-card-box-shadow, none); }
-        .header { display:flex; justify-content:space-between; align-items:end; margin-bottom:14px; }
-        .title { font-size:18px; font-weight:600; }
-        .total { font-size:24px; font-weight:700; text-align:right; }
-        .sub { color:var(--secondary-text-color); font-size:12px; text-align:right; }
-        .holding { border-top:1px solid var(--divider-color); padding:10px 0; }
-        .summary { display:grid; grid-template-columns:minmax(0,1fr) auto auto 32px; gap:12px; align-items:center; }
-        .name { font-weight:600; }
-        .meta { color:var(--secondary-text-color); font-size:12px; margin-top:3px; }
-        .value { font-weight:600; }
-        .gain { font-weight:600; }
-        button { border:0; background:transparent; color:var(--primary-text-color); cursor:pointer; min-width:32px; min-height:32px; border-radius:8px; }
-        button:hover { background:var(--secondary-background-color); }
-        .chart-panel { padding:10px 0 4px; }
-        .periods { display:flex; gap:4px; flex-wrap:wrap; margin-bottom:10px; }
-        .periods button { color:var(--secondary-text-color); font-size:12px; }
-        .chart-placeholder { height:140px; display:grid; place-items:center; color:var(--secondary-text-color); background:var(--secondary-background-color); border-radius:10px; }
-        @media (max-width:600px) { .summary { grid-template-columns:minmax(0,1fr) auto 32px; } .gain { display:none; } }
-      </style>
-      <ha-card class="card">
-        <div class="header">
-          <div class="title">Investment Tracker</div>
-          <div><div class="total">—</div><div class="sub">Portfolio value</div></div>
-        </div>
-        <div class="holdings">${rows}</div>
-      </ha-card>
-    `;
-
-    this.shadowRoot.querySelectorAll('.holding > .summary > button').forEach((button) => {
-      button.addEventListener('click', () => {
-        const panel = button.closest('.holding').querySelector('.chart-panel');
-        panel.hidden = !panel.hidden;
-        button.textContent = panel.hidden ? '⌄' : '⌃';
-      });
-    });
+    const total = this.totals();
+    const gain = total.current - total.invested;
+    const pct = total.invested ? gain / total.invested * 100 : null;
+    this.shadowRoot.innerHTML = `<style>${this.styles()}</style><ha-card class="card">
+      <div class="header"><div><div class="title">${this.escape(this.config.title)}</div><div class="caption">${this.config.holdings.length} holdings</div></div>
+      <div class="header-value"><div class="total">${total.missing ? '—' : this.money(total.current)}</div><div class="${this.gainClass(gain)}">${total.missing ? 'Waiting for price data' : `${this.signedMoney(gain)} · ${this.signedPercent(pct)}`}</div></div></div>
+      <div class="holdings">${this.config.holdings.map((item) => this.renderHolding(item)).join('')}</div>
+    </ha-card>`;
+    this.bind();
   }
 
-  money(value, currency) {
-    const number = Number(value);
-    if (!Number.isFinite(number)) return '—';
-    return new Intl.NumberFormat(undefined, { style:'currency', currency }).format(number);
+  renderHolding(item) {
+    const id = this.id(item);
+    const p = this.position(item);
+    const open = this._expanded === id;
+    const currency = item.currency || this.config.display_currency;
+    return `<div class="holding" data-id="${this.escape(id)}">
+      <button class="summary" type="button" aria-expanded="${open}">
+        <span class="identity"><span class="name">${this.escape(item.name || item.symbol)}</span><span class="meta">${this.number(p.shares)} shares · Invested ${this.money(p.invested)}</span></span>
+        <span class="current"><span class="current-value">${p.current === null ? '—' : this.money(p.current)}</span><span class="source">${this.escape(String(currency))}</span></span>
+        <span class="position-gain ${this.gainClass(p.gain)}">${this.signedPercent(p.gainPct)}</span><span class="chevron">${open ? '⌃' : '⌄'}</span>
+      </button>${open ? this.renderDetail(item, p) : ''}
+    </div>`;
   }
 
-  escape(value) {
-    return String(value).replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  renderDetail(item, p) {
+    const id = this.id(item);
+    const period = this._periods[id] || '1M';
+    const history = this._history[id]?.[period] || [];
+    const loading = this._loading[id]?.[period];
+    return `<div class="detail"><div class="detail-top">
+      <div><div class="detail-value">${p.price === null ? '—' : this.money(p.price, item.currency || this.config.display_currency)}</div><div class="detail-label">Current price</div></div>
+      <div class="detail-stat"><span>Invested</span><strong>${this.money(p.invested)}</strong></div><div class="detail-stat"><span>Value</span><strong>${p.current === null ? '—' : this.money(p.current)}</strong></div>
+    </div><div class="periods">${['1D','1W','1M','3M','6M','1Y','5Y','MAX'].map((x) => `<button class="period ${x === period ? 'selected' : ''}" data-period="${x}" type="button">${x}</button>`).join('')}</div>
+    <div class="chart">${loading ? '<div class="chart-message">Loading history…</div>' : this.chart(history, item)}</div></div>`;
   }
+
+  chart(history, item) {
+    const values = history.map((x) => x.value).filter(Number.isFinite);
+    if (values.length < 2) return '<div class="chart-message">Historical data is not available yet.</div>';
+    const w = 760, h = 220, pad = 12, min = Math.min(...values), max = Math.max(...values), range = max - min || 1;
+    const points = history.map((x, i) => `${(pad + i / (history.length - 1) * (w - pad * 2)).toFixed(1)},${(h - pad - (x.value - min) / range * (h - pad * 2)).toFixed(1)}`).join(' ');
+    const change = values[0] ? (values.at(-1) - values[0]) / values[0] * 100 : null;
+    return `<div class="chart-head"><span>${this.money(values.at(-1), item.currency || this.config.display_currency)}</span><span class="${this.gainClass(change)}">${this.signedPercent(change)} over period</span></div><svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"><polyline points="${points}" fill="none" stroke="var(--primary-color)" stroke-width="3" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round" /></svg>`;
+  }
+
+  bind() {
+    this.shadowRoot.querySelectorAll('.summary').forEach((button) => button.addEventListener('click', () => {
+      const id = button.closest('.holding').dataset.id;
+      this._expanded = this._expanded === id ? null : id;
+      this.render();
+      if (this._expanded) {
+        const item = this.config.holdings.find((x) => this.id(x) === id);
+        this.loadHistory(item, this._periods[id] || '1M');
+      }
+    }));
+    this.shadowRoot.querySelectorAll('.period').forEach((button) => button.addEventListener('click', () => {
+      const id = button.closest('.holding').dataset.id;
+      const period = button.dataset.period;
+      this._periods[id] = period;
+      const item = this.config.holdings.find((x) => this.id(x) === id);
+      this.loadHistory(item, period);
+    }));
+  }
+
+  async loadHistory(item, period) {
+    if (!this._hass || !item?.price_entity) return;
+    const id = this.id(item);
+    this._loading[id] = { ...(this._loading[id] || {}), [period]: true };
+    this.render();
+    const end = new Date();
+    const start = new Date(end);
+    const days = { '1D':1, '1W':7, '1M':31, '3M':93, '6M':186, '1Y':366, '5Y':1826, 'MAX':3650 }[period] || 31;
+    start.setDate(start.getDate() - days);
+    try {
+      const result = await this._hass.callWS({ type:'history/history_during_period', start_time:start.toISOString(), end_time:end.toISOString(), entity_ids:[item.price_entity], minimal_response:true, no_attributes:true, significant_changes_only:false });
+      const states = Array.isArray(result) ? (result[0] || []) : [];
+      const points = states.map((s) => ({ time:new Date(s.last_changed || s.last_updated).getTime(), value:Number.parseFloat(s.state) })).filter((x) => Number.isFinite(x.time) && Number.isFinite(x.value));
+      this._history[id] = { ...(this._history[id] || {}), [period]:points };
+    } catch (err) {
+      console.warn('Investment Tracker Card history error', err);
+      this._history[id] = { ...(this._history[id] || {}), [period]:[] };
+    }
+    this._loading[id] = { ...(this._loading[id] || {}), [period]: false };
+    this.render();
+  }
+
+  styles() { return `
+    :host{display:block}.card{overflow:hidden;padding:0 16px;border-radius:16px;background:var(--ha-card-background,var(--card-background-color,#fff));color:var(--primary-text-color);box-shadow:var(--ha-card-box-shadow,none)}
+    .header{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:18px 0 14px}.title{font-size:18px;font-weight:700}.caption,.meta,.source,.detail-label,.detail-stat span{color:var(--secondary-text-color)}.caption{font-size:12px;margin-top:3px}.header-value{text-align:right}.total{font-size:24px;font-weight:750;line-height:1.1}.positive{color:var(--success-color,#2e7d32)}.negative{color:var(--error-color,#c62828)}.neutral{color:var(--secondary-text-color)}
+    .holding{border-top:1px solid var(--divider-color)}.summary{width:100%;display:grid;grid-template-columns:minmax(0,1fr) auto auto 28px;gap:14px;align-items:center;padding:12px 0;border:0;background:transparent;color:inherit;text-align:left;cursor:pointer}.summary:hover{background:var(--secondary-background-color)}.identity{min-width:0;display:flex;flex-direction:column;gap:3px}.name{font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.meta{font-size:12px}.current{display:flex;flex-direction:column;align-items:flex-end;gap:2px}.current-value{font-weight:650;white-space:nowrap}.source{font-size:10px}.position-gain{min-width:66px;text-align:right;font-size:13px;font-weight:650}.chevron{text-align:center;font-size:18px;color:var(--secondary-text-color)}
+    .detail{padding:4px 0 16px}.detail-top{display:flex;gap:28px;align-items:end;padding:4px 0 12px}.detail-value{font-size:20px;font-weight:700}.detail-label,.detail-stat span{display:block;font-size:11px;margin-top:3px}.detail-stat strong{display:block;font-size:13px;margin-top:3px}.periods{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px}.period{border:0;border-radius:7px;padding:5px 8px;background:transparent;color:var(--secondary-text-color);cursor:pointer;font-size:11px;font-weight:650}.period:hover,.period.selected{background:var(--secondary-background-color);color:var(--primary-text-color)}.chart{min-height:160px;border-radius:10px;background:var(--secondary-background-color);overflow:hidden}.chart svg{display:block;width:100%;height:180px}.chart-head{display:flex;justify-content:space-between;padding:9px 10px 0;font-size:12px;font-weight:600}.chart-message{height:180px;display:grid;place-items:center;color:var(--secondary-text-color);font-size:12px}
+    @media(max-width:600px){.summary{grid-template-columns:minmax(0,1fr) auto 28px}.position-gain{display:none}.detail-top{gap:16px}}
+  `; }
+
+  number(value) { return new Intl.NumberFormat(undefined,{maximumFractionDigits:4}).format(Number(value)||0); }
+  money(value,currency=this.config.display_currency){ const n=Number(value); return Number.isFinite(n)?new Intl.NumberFormat(undefined,{style:'currency',currency,maximumFractionDigits:2}).format(n):'—'; }
+  signedMoney(value,currency=this.config.display_currency){ const n=Number(value); return Number.isFinite(n)?`${n>=0?'+':''}${this.money(n,currency)}`:'—'; }
+  signedPercent(value){ const n=Number(value); return Number.isFinite(n)?`${n>=0?'+':''}${n.toFixed(2)}%`:'—'; }
+  gainClass(value){ const n=Number(value); return Number.isFinite(n)?n>0?'positive':n<0?'negative':'neutral':'neutral'; }
+  escape(value){ return String(value).replace(/[&<>"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 }
 
 customElements.define('investment-tracker-card', InvestmentTrackerCard);
