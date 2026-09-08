@@ -1,0 +1,52 @@
+type: custom:investment-tracker-card
+title: My Investments
+display_currency: GBP
+
+# The card reads live prices from Home Assistant entities.
+# Replace the example entities below with your own market-data sensors.
+holdings:
+  - isin: US22788C1053
+    symbol: CRWD
+    name: CrowdStrike
+    exchange: NASDAQ
+    shares: 8
+    invested: 747.30
+    currency: USD
+    price_entity: sensor.crowdstrike_price
+    fx_rate_entity: sensor.usd_gbp
+
+  - isin: US69608A1088
+    symbol: PLTR
+    name: Palantir
+    exchange: NYSE
+    shares: 7
+    invested: 720.43
+    currency: USD
+    price_entity: sensor.palantir_price
+    fx_rate_entity: sensor.usd_gbp
+
+  - isin: US0231351067
+    symbol: AMZN
+    name: Amazon
+    exchange: NASDAQ
+    shares: 4
+    invested: 659.67
+    currency: USD
+    price_entity: sensor.amazon_price
+    fx_rate_entity: sensor.usd_gbp
+
+  - isin: IE00B3Y8X563
+    symbol: CSP1
+    name: iShares S&P 500 GBP Hedged UCITS ETF
+    exchange: LSE
+    shares: 7
+    invested: 975.31
+    currency: GBP
+    price_entity: sensor.sp500_etf_price
+
+# Notes:
+# - `invested` is entered in the holding's `currency`.
+# - For a foreign-currency holding, `fx_rate_entity` must represent
+#   1 unit of the holding currency expressed in the portfolio currency.
+# - ISIN is the primary security identifier; ticker/symbol is retained
+#   for compatibility with market-data providers.
