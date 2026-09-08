@@ -46,6 +46,7 @@ holdings:
   - isin: US69608A1088
     symbol: PLTR
     name: Palantir
+    exchange: NYSE
     shares: 7
     invested: 720.43
     currency: USD
@@ -100,6 +101,10 @@ When a holding is expanded, the card requests historical values for its `price_e
 - Add AI portfolio/event summaries and alerts
 - Prepare a tagged HACS release
 
+## Installation readiness
+
+This repository is still a development build. **Do not install it as the production version yet.** A HACS-ready release will be announced only after the card has passed the available automated validation and the core Home Assistant behaviour has been checked.
+
 ## Status
 
-Early development — **do not install as a production card yet**.
+Development — the current feature branch is being stabilized before the first tagged release.
