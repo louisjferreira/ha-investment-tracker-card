@@ -7,6 +7,7 @@ A reusable Home Assistant Lovelace card for tracking stocks and ETFs with live H
 The card currently supports:
 
 - Portfolio invested amount, current value and gain percentage
+- Portfolio allocation percentage per holding
 - Configurable holdings with shares/units and invested amount
 - Selectable portfolio display currency
 - Selectable holding currency
@@ -15,10 +16,13 @@ The card currently supports:
 - ISIN security lookup in the visual card editor using the OpenFIGI security master
 - Selection of a returned security to populate its name, ticker and exchange
 - Expandable holding rows
+- Current price, average purchase price, invested amount and current value detail metrics
 - Historical charts using Home Assistant Recorder history
+- Interactive chart hover values
 - Chart periods: 1D, 1W, 1M, 3M, 6M, 1Y, 5Y and MAX
 - Responsive desktop/mobile layout
 - Home Assistant theme-aware styling
+- Graceful handling when price or FX data is unavailable
 
 ## Configuration
 
@@ -51,6 +55,7 @@ holdings:
   - isin: US0231351067
     symbol: AMZN
     name: Amazon
+    exchange: NASDAQ
     shares: 4
     invested: 659.67
     currency: USD
@@ -82,17 +87,17 @@ The card deliberately separates the UI from the market-data provider. Users can 
 
 ### Charts
 
-When a holding is expanded, the card requests historical values for its `price_entity` from Home Assistant Recorder. This means the chart works independently of the market-data provider. The provider only needs to keep the price sensor updated.
+When a holding is expanded, the card requests historical values for its `price_entity` from Home Assistant Recorder. The chart is therefore independent of the market-data provider. The provider only needs to keep the price sensor updated. The card handles missing or insufficient history without breaking the holding view.
 
 ## Planned next steps
 
-- Add a polished production UI
-- Improve chart rendering and tooltips
+- Improve chart scaling and add clearer time-axis context
+- Add daily portfolio movement and daily change indicators
 - Add ready-made market-data sensor examples
 - Add provider-specific instrument mapping where appropriate
 - Support transaction history and partial buys/sells
-- Add allocation percentages and daily change
 - Add optional watchlist/trading sections
+- Add AI portfolio/event summaries and alerts
 - Prepare a tagged HACS release
 
 ## Status
