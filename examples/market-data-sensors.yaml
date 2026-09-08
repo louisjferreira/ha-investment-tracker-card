@@ -1,0 +1,55 @@
+# Provider-agnostic market-data examples for Investment Tracker Card
+#
+# The card intentionally does not depend on a specific market-data provider.
+# Any Home Assistant entity that exposes a numeric price can be used as
+# `price_entity`. For foreign-currency holdings, `fx_rate_entity` should
+# expose the conversion rate from the holding currency to the portfolio
+# display currency.
+#
+# These are examples only. Replace the entities and source configuration
+# with the integration/provider you actually use.
+
+# Example price sensors supplied by your chosen market-data integration:
+#
+# sensor.apple_price
+# sensor.amazon_price
+# sensor.crowdstrike_price
+# sensor.palantir_price
+# sensor.ftse_100_price
+# sensor.nasdaq_100_price
+#
+# Example FX sensors:
+#
+# sensor.usd_gbp
+# sensor.eur_gbp
+#
+# Example card wiring when the portfolio display currency is GBP:
+#
+# type: custom:investment-tracker-card
+# title: Investment Tracker
+# display_currency: GBP
+# holdings:
+#   - isin: US0378331005
+#     name: Apple Inc.
+#     symbol: AAPL
+#     exchange: NASDAQ
+#     currency: USD
+#     shares: 3
+#     invested: 900
+#     price_entity: sensor.apple_price
+#     fx_rate_entity: sensor.usd_gbp
+#   - isin: GB0001383545
+#     name: FTSE 100 ETF
+#     symbol: ISF
+#     exchange: LSE
+#     currency: GBP
+#     shares: 10
+#     invested: 900
+#     price_entity: sensor.ftse_100_price
+#
+# Important:
+# - `invested` is entered in the holding currency.
+# - `price_entity` is the current market price in the holding currency.
+# - `fx_rate_entity` is only required when holding currency differs from
+#   the portfolio display currency.
+# - The FX direction must be holding currency -> portfolio currency.
