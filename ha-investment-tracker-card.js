@@ -60,7 +60,44 @@ class InvestmentTrackerCardEditor extends HTMLElement {
   holding(h, i) { const currency = h.currency || this.config.display_currency, search = this._search[i] || {}, results = (search.results || []).map((r, index) => `<button class="result" type="button" data-result-index="${index}"><strong>${this.escape(r.name || 'Unknown security')}</strong><span>${this.escape(r.ticker || 'No ticker')} · ${this.escape(r.exchangeCode || r.exchCode || 'Exchange unknown')} · ${this.escape(r.securityType || r.marketSector || 'Security')}</span></button>`).join(''); return `<div class="holding" data-index="${i}"><div class="holding-head"><span>Holding ${i + 1}</span><button class="remove" data-action="remove" type="button">Remove</button></div><div class="field"><div class="label">ISIN (primary security ID)</div><div class="search-row"><input data-key="isin" value="${this.escape(h.isin || '')}" placeholder="e.g. US0378331005"><button class="search-button" data-action="search" type="button">Search ISIN</button></div>${search.loading ? '<div class="search-status">Searching security master…</div>' : ''}${search.error ? `<div class="search-status">${this.escape(search.error)}</div>` : ''}${results ? `<div class="results">${results}</div>` : ''}</div><div class="field"><div class="label">Name</div><input data-key="name" value="${this.escape(h.name || '')}" placeholder="Apple Inc."></div><div class="field"><div class="label">Ticker / symbol</div><input data-key="symbol" value="${this.escape(h.symbol || '')}" placeholder="AAPL"></div><div class="field"><div class="label">Exchange</div><input data-key="exchange" value="${this.escape(h.exchange || '')}" placeholder="NASDAQ"></div><div class="field"><div class="label">Currency</div><select data-key="currency">${this.currencyOptions(currency)}</select></div><div class="field"><div class="label">Shares / units</div><input data-key="shares" type="number" step="any" value="${this.escape(h.shares ?? 0)}"></div><div class="field"><div class="label">Invested amount (${this.escape(currency)})</div><input data-key="invested" type="number" step="0.01" value="${this.escape(h.invested ?? 0)}"></div><div class="field"><div class="label">Price entity</div><input data-key="price_entity" value="${this.escape(h.price_entity || '')}" placeholder="sensor.apple_price"></div><div class="field"><div class="label">FX rate entity (source currency → portfolio currency)</div><input data-key="fx_rate_entity" value="${this.escape(h.fx_rate_entity || '')}" placeholder="sensor.usd_gbp"></div></div>`; }
   bind() { this.shadowRoot.querySelector('#title').addEventListener('input', e => this.commit({ title: e.target.value })); this.shadowRoot.querySelector('#display_currency').addEventListener('change', e => this.commit({ display_currency: e.target.value })); this.shadowRoot.querySelector('#add').addEventListener('click', () => this.commit({ holdings: [...this.config.holdings, { isin: '', name: '', symbol: '', exchange: '', currency: this.config.display_currency, shares: 0, invested: 0, price_entity: '', fx_rate_entity: '' }] })); this.shadowRoot.querySelectorAll('.holding').forEach(row => { const index = Number(row.dataset.index); row.querySelectorAll('[data-key]').forEach(el => el.addEventListener(el.tagName === 'SELECT' ? 'change' : 'input', () => { const holdings = this.config.holdings.map((holding, idx) => idx === index ? { ...holding, [el.dataset.key]: this.parseValue(el.dataset.key, el.value) } : holding); this.commit({ holdings }, el); })); row.querySelector('[data-action="remove"]').addEventListener('click', () => this.commit({ holdings: this.config.holdings.filter((_, idx) => idx !== index) })); row.querySelector('[data-action="search"]').addEventListener('click', () => this.searchIsin(index)); row.querySelectorAll('[data-result-index]').forEach(button => button.addEventListener('click', () => this.selectResult(index, Number(button.dataset.resultIndex)))); }); }
   parseValue(key, value) { return key === 'shares' || key === 'invested' ? Number(value) || 0 : value; }
-  async searchIsin(index) { const isin = String(this.config.holdings[index]?.isin || '').trim().toUpperCase(); if (!/^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(isin)) { this._search[index] = { error: 'Enter a valid 12-character ISIN before searching.' }; this.render(); return; } this._search[index] = { loading: true }; this.render(); let timeout; try { const controller = new AbortController(); timeout = setTimeout(() => controller.abort(), 10000); const response = await fetch('https://api.openfigi.com/v3/mapping', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify([{ idType: 'ID_ISIN', idValue: isin }]), signal: controller.signal }); if (!response.ok) throw new Error(`Security lookup returned HTTP ${response.status}.`); const payload = await response.json(); if (payload?.[0]?.error) throw new Error(payload[0].error); const results = Array.isArray(payload?.[0]?.data) ? payload[0].data : []; if (!results.length) throw new Error('No security was found for that ISIN.'); this._search[index] = { results: results.slice(0, 10) }; } catch (err) { console.warn('Investment Tracker Card ISIN lookup error', err); this._search[index] = { error: err.name === 'AbortError' ? 'Security lookup timed out.' : err.message || 'Security lookup failed.' }; } finally { clearTimeout(timeout); } this.render(); }
+  async searchIsin(index) {
+    const isin = String(this.config.holdings[index]?.isin || '').trim().toUpperCase();
+    if (!/^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(isin)) {
+      this._search[index] = { error: 'Enter a valid 12-character ISIN before searching.' };
+      this.render();
+      return;
+    }
+    this._search[index] = { loading: true };
+    this.render();
+    let timeout;
+    try {
+      const controller = new AbortController();
+      timeout = setTimeout(() => controller.abort(), 10000);
+      const response = await fetch(`https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(isin)}&quotesCount=10&newsCount=0&listsCount=0`, {
+        signal: controller.signal,
+        headers: { Accept: 'application/json' },
+      });
+      if (!response.ok) throw new Error(`Security lookup returned HTTP ${response.status}.`);
+      const payload = await response.json();
+      const results = Array.isArray(payload?.quotes)
+        ? payload.quotes.map(result => ({
+            ...result,
+            name: result.longname || result.shortname || result.name || result.symbol,
+            ticker: result.symbol,
+            exchangeCode: result.exchange || result.fullExchangeName || result.exchangeTimezoneName,
+            securityType: result.quoteType || 'Security',
+          })).filter(result => result.symbol)
+        : [];
+      if (!results.length) throw new Error('No security was found for that ISIN.');
+      this._search[index] = { results: results.slice(0, 10) };
+    } catch (err) {
+      console.warn('Investment Tracker Card ISIN lookup error', err);
+      this._search[index] = { error: err.name === 'AbortError' ? 'Security lookup timed out.' : err.message || 'Security lookup failed.' };
+    } finally {
+      clearTimeout(timeout);
+    }
+    this.render();
+  }
   selectResult(index, resultIndex) { const result = this._search[index]?.results?.[resultIndex]; if (!result) return; const holdings = this.config.holdings.map((holding, idx) => idx === index ? { ...holding, name: result.name || holding.name, symbol: result.ticker || holding.symbol, exchange: result.exchangeCode || result.exchCode || holding.exchange } : holding); this._search[index] = {}; this.commit({ holdings }); }
   commit(changes, sourceElement = null) { this.config = { ...this.config, ...changes }; this.dispatchEvent(new CustomEvent('config-changed', { detail: { config: this.config }, bubbles: true, composed: true })); if (!sourceElement) { this.render(); return; } const key = sourceElement.dataset?.key; const selectionStart = sourceElement.selectionStart; const selectionEnd = sourceElement.selectionEnd; this.render(); const replacement = key ? this.shadowRoot.querySelector(`[data-key="${CSS.escape(key)}"]`) : null; if (replacement && document.activeElement !== replacement) { replacement.focus(); if (selectionStart !== null) replacement.setSelectionRange(selectionStart, selectionEnd); } }
   escape(value) { return String(value).replace(/[&<>\"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', "'": '&#39;' }[c])); }
