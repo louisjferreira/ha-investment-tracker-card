@@ -53,8 +53,8 @@ holdings:
     shares: 7
     invested: 971.70
     currency: USD
-    fx_rate_entity: sensor.usd_gbp
     price_entity: sensor.palantir_price
+    fx_rate_entity: sensor.usd_gbp
 
   - isin: US0231351067
     symbol: AMZN
