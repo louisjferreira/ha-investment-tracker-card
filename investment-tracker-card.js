@@ -5,7 +5,7 @@ const CURRENCIES = [
   ['NOK', 'kr', 'Norwegian Krone'], ['DKK', 'kr', 'Danish Krone'],
 ];
 const PERIODS = ['1D', '1W', '1M', '3M', '6M', '1Y', '5Y', 'MAX'];
-const PERIOD_DAYS = { '1D': 1, '1W': 7, '1M': 31, '3M': 93, '6M': 186, '1Y': 366, '5Y': 1826, 'MAX': 3650 };
+const PERIOD_DAYS = { '1D': 1, '1W': 7, '1M': 31, '3M': 93, '6M': 186, '1Y': 366, '5Y': 1826 };
 
 class InvestmentTrackerCard extends HTMLElement {
   setConfig(config) {
@@ -16,6 +16,8 @@ class InvestmentTrackerCard extends HTMLElement {
     this._history = {};
     this._loading = {};
     this._hover = {};
+    this._portfolioDay = null;
+    this._portfolioDayLoading = false;
     this._lastHassSignature = '';
     this.render();
   }
@@ -30,10 +32,11 @@ class InvestmentTrackerCard extends HTMLElement {
     if (signature !== this._lastHassSignature) {
       this._lastHassSignature = signature;
       this.render();
+      this.loadPortfolioDay();
     }
   }
 
-  getCardSize() { return Math.max(4, 4 + (this.config?.holdings?.length || 0) * 2); }
+  getCardSize() { return Math.max(4, 5 + (this.config?.holdings?.length || 0) * 2); }
   id(item) { return String(item.isin || item.id || item.symbol || item.name); }
 
   price(item) {
@@ -78,6 +81,13 @@ class InvestmentTrackerCard extends HTMLElement {
     return current === null || !totalCurrent ? null : current / totalCurrent * 100;
   }
 
+  portfolioDayMarkup() {
+    const day = this._portfolioDay;
+    if (this._portfolioDayLoading) return '<span class="day-movement neutral">Today · loading…</span>';
+    if (!day || day.change === null) return '<span class="day-movement neutral">Today · —</span>';
+    return `<span class="day-movement ${this.gainClass(day.change)}">Today ${this.signedMoney(day.change)} · ${this.signedPercent(day.pct)}</span>`;
+  }
+
   render() {
     if (!this.shadowRoot) this.attachShadow({ mode: 'open' });
     const total = this.totals();
@@ -89,7 +99,7 @@ class InvestmentTrackerCard extends HTMLElement {
     this.shadowRoot.innerHTML = `<style>${this.styles()}</style><ha-card class="card">
       <div class="header">
         <div><div class="title">${this.escape(this.config.title)}</div><div class="caption">${this.config.holdings.length} holdings · ${this.escape(this.config.display_currency)}</div></div>
-        <div class="header-value"><div class="total">${missing ? '—' : this.money(total.current)}</div><div class="${this.gainClass(gain)}">${missing ? 'Waiting for price / FX data' : `${this.signedMoney(gain)} · ${this.signedPercent(pct)}`}</div></div>
+        <div class="header-value"><div class="total">${missing ? '—' : this.money(total.current)}</div><div class="${this.gainClass(gain)} lifetime-gain">${missing ? 'Waiting for price / FX data' : `${this.signedMoney(gain)} · ${this.signedPercent(pct)} lifetime`}</div>${this.portfolioDayMarkup()}</div>
       </div>
       <div class="portfolio-strip">
         <div><span>Invested</span><strong>${this.money(total.invested)}</strong></div>
@@ -142,6 +152,60 @@ class InvestmentTrackerCard extends HTMLElement {
     return Number.isFinite(first) && first !== 0 && Number.isFinite(last) ? (last - first) / first * 100 : null;
   }
 
+  async loadPortfolioDay() {
+    if (!this._hass || this._portfolioDayLoading || !this.config?.holdings?.length) return;
+    this._portfolioDayLoading = true;
+    this.render();
+    try {
+      const end = new Date();
+      const start = new Date(end);
+      start.setDate(start.getDate() - 1);
+      const entityIds = this.config.holdings.flatMap(item => item.price_entity ? [item.price_entity, ...(item.fx_rate_entity && (item.currency || this.config.display_currency) !== this.config.display_currency ? [item.fx_rate_entity] : [])] : []);
+      const uniqueIds = [...new Set(entityIds)];
+      if (!uniqueIds.length) return;
+      const result = await this._hass.callWS({ type: 'history/history_during_period', start_time: start.toISOString(), end_time: end.toISOString(), entity_ids: uniqueIds, minimal_response: true, no_attributes: true, significant_changes_only: false });
+      const historyFor = entityId => {
+        const states = Array.isArray(result) ? (result.find(entry => entry?.[0]?.entity_id === entityId) || []) : (result?.[entityId] || []);
+        return states.map(s => ({ time: new Date(s.last_changed || s.last_updated).getTime(), value: Number.parseFloat(s.state) })).filter(x => Number.isFinite(x.time) && Number.isFinite(x.value)).sort((a, b) => a.time - b.time);
+      };
+      const previous = [];
+      let currentKnown = 0;
+      let previousKnown = 0;
+      let currentValue = 0;
+      let previousValue = 0;
+      for (const item of this.config.holdings) {
+        const p = this.position(item);
+        if (p.current === null) continue;
+        const priceHistory = historyFor(item.price_entity);
+        const priorPrice = priceHistory.length ? priceHistory[0].value : null;
+        const sourceCurrency = item.currency || this.config.display_currency;
+        let priorFx = 1;
+        if (sourceCurrency !== this.config.display_currency) {
+          const fxHistory = historyFor(item.fx_rate_entity);
+          priorFx = fxHistory.length ? fxHistory[0].value : null;
+        }
+        if (priorPrice === null || priorFx === null || !Number.isFinite(priorFx) || priorFx <= 0) continue;
+        currentValue += p.current;
+        previousValue += p.shares * priorPrice * priorFx;
+        currentKnown += 1;
+        previousKnown += 1;
+        previous.push({ id: this.id(item), value: p.shares * priorPrice * priorFx });
+      }
+      if (currentKnown === this.config.holdings.length && previousKnown === this.config.holdings.length && previousValue !== 0) {
+        const change = currentValue - previousValue;
+        this._portfolioDay = { change, pct: change / previousValue * 100 };
+      } else {
+        this._portfolioDay = null;
+      }
+    } catch (err) {
+      console.warn('Investment Tracker Card portfolio day history error', err);
+      this._portfolioDay = null;
+    } finally {
+      this._portfolioDayLoading = false;
+      this.render();
+    }
+  }
+
   chart(history, item, id) {
     const values = history.map(x => x.value).filter(Number.isFinite);
     if (values.length < 2) return '<div class="chart-message">Historical data is not available yet.</div>';
@@ -149,10 +213,8 @@ class InvestmentTrackerCard extends HTMLElement {
     const min = Math.min(...values), max = Math.max(...values), range = max - min || Math.max(Math.abs(max), 1);
     const points = history.map((x, i) => `${(padX + i / (history.length - 1) * (w - padX * 2)).toFixed(1)},${(h - padY - (x.value - min) / range * (h - padY * 2)).toFixed(1)}`).join(' ');
     const first = values[0], last = values.at(-1), change = first ? (last - first) / first * 100 : null;
-    const hover = this._hover[id];
-    const hoverMarkup = hover ? `<div class="tooltip" style="left:${hover.x}%"><strong>${this.money(hover.value, item.currency || this.config.display_currency)}</strong><span>${this.formatDate(hover.time)}</span></div>` : '';
     return `<div class="chart-head"><div><strong>${this.money(last, item.currency || this.config.display_currency)}</strong><span>Market price</span></div><span class="${this.gainClass(change)}">${this.signedPercent(change)} over period</span></div>
-      <div class="chart-body"><svg class="price-chart" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" data-chart-id="${this.escape(id)}"><polyline points="${points}" fill="none" stroke="var(--primary-color)" stroke-width="3" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/></svg>${hoverMarkup}</div>`;
+      <div class="chart-body"><svg class="price-chart" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" data-chart-id="${this.escape(id)}"><polyline points="${points}" fill="none" stroke="var(--primary-color)" stroke-width="3" vector-effect="non-scaling-stroke" stroke-linecap="round" stroke-linejoin="round"/></svg></div>`;
   }
 
   bind() {
@@ -167,7 +229,6 @@ class InvestmentTrackerCard extends HTMLElement {
         if (!this._history[id]?.['1D']?.length) this.loadHistory(item, '1D');
       }
     }));
-
     this.shadowRoot.querySelectorAll('.period').forEach(button => button.addEventListener('click', event => {
       event.stopPropagation();
       const id = button.closest('.holding').dataset.id;
@@ -178,14 +239,9 @@ class InvestmentTrackerCard extends HTMLElement {
       const item = this.config.holdings.find(x => this.id(x) === id);
       this.loadHistory(item, period);
     }));
-
     this.shadowRoot.querySelectorAll('.price-chart').forEach(svg => {
       svg.addEventListener('mousemove', event => this.chartHover(event, svg));
-      svg.addEventListener('mouseleave', () => {
-        delete this._hover[svg.dataset.chartId];
-        const tooltip = svg.closest('.chart-body')?.querySelector('.tooltip');
-        tooltip?.remove();
-      });
+      svg.addEventListener('mouseleave', () => { delete this._hover[svg.dataset.chartId]; const tooltip = svg.closest('.chart-body')?.querySelector('.tooltip'); tooltip?.remove(); });
     });
   }
 
@@ -199,23 +255,12 @@ class InvestmentTrackerCard extends HTMLElement {
     const index = Math.min(history.length - 1, Math.max(0, Math.round(ratio * (history.length - 1))));
     const point = history[index];
     this._hover[id] = { x: ratio * 100, value: point.value, time: point.time };
-    this.updateTooltip(id);
-  }
-
-  updateTooltip(id) {
-    const svg = this.shadowRoot.querySelector(`.price-chart[data-chart-id="${CSS.escape(id)}"]`);
-    if (!svg) return;
     const body = svg.closest('.chart-body');
-    const old = body.querySelector('.tooltip');
-    if (old) old.remove();
-    const hover = this._hover[id];
-    if (!hover) return;
+    body.querySelector('.tooltip')?.remove();
     const item = this.config.holdings.find(x => this.id(x) === id);
     if (!item) return;
-    const tooltip = document.createElement('div');
-    tooltip.className = 'tooltip';
-    tooltip.style.left = `${hover.x}%`;
-    tooltip.innerHTML = `<strong>${this.escape(this.money(hover.value, item.currency || this.config.display_currency))}</strong><span>${this.escape(this.formatDate(hover.time))}</span>`;
+    const tooltip = document.createElement('div'); tooltip.className = 'tooltip'; tooltip.style.left = `${ratio * 100}%`;
+    tooltip.innerHTML = `<strong>${this.escape(this.money(point.value, item.currency || this.config.display_currency))}</strong><span>${this.escape(this.formatDate(point.time))}</span>`;
     body.appendChild(tooltip);
   }
 
@@ -227,7 +272,7 @@ class InvestmentTrackerCard extends HTMLElement {
     this.render();
     const end = new Date();
     const start = new Date(end);
-    start.setDate(start.getDate() - (PERIOD_DAYS[period] || 31));
+    if (period === 'MAX') start.setFullYear(2000, 0, 1); else start.setDate(start.getDate() - (PERIOD_DAYS[period] || 31));
     try {
       const result = await this._hass.callWS({ type: 'history/history_during_period', start_time: start.toISOString(), end_time: end.toISOString(), entity_ids: [item.price_entity], minimal_response: true, no_attributes: true, significant_changes_only: false });
       const states = Array.isArray(result) ? (result[0] || []) : (result?.[item.price_entity] || []);
@@ -243,12 +288,12 @@ class InvestmentTrackerCard extends HTMLElement {
 
   styles() { return `
     :host{display:block}.card{overflow:hidden;padding:0 16px;border-radius:16px;background:var(--ha-card-background,var(--card-background-color,#fff));color:var(--primary-text-color);box-shadow:var(--ha-card-box-shadow,none)}
-    .header{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:18px 0 14px}.title{font-size:18px;font-weight:700}.caption,.meta,.source{color:var(--secondary-text-color)}.caption{font-size:12px;margin-top:3px}.header-value{text-align:right}.total{font-size:24px;font-weight:750;line-height:1.1}.positive{color:var(--success-color,#2e7d32)}.negative{color:var(--error-color,#c62828)}.neutral{color:var(--secondary-text-color)}
+    .header{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:18px 0 14px}.title{font-size:18px;font-weight:700}.caption,.meta,.source{color:var(--secondary-text-color)}.caption{font-size:12px;margin-top:3px}.header-value{text-align:right}.total{font-size:24px;font-weight:750;line-height:1.1}.lifetime-gain{font-size:12px;margin-top:3px}.day-movement{display:block;font-size:12px;font-weight:650;margin-top:4px}.positive{color:var(--success-color,#2e7d32)}.negative{color:var(--error-color,#c62828)}.neutral{color:var(--secondary-text-color)}
     .portfolio-strip{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:0 0 10px}.portfolio-strip>div{padding:9px 10px;border-radius:9px;background:var(--secondary-background-color)}.portfolio-strip span{display:block;font-size:10px;color:var(--secondary-text-color)}.portfolio-strip strong{display:block;font-size:13px;margin-top:3px}
     .holding{border-top:1px solid var(--divider-color)}.summary{width:100%;display:grid;grid-template-columns:minmax(0,1fr) auto auto 28px;gap:14px;align-items:center;padding:12px 0;border:0;background:transparent;color:inherit;text-align:left;cursor:pointer}.summary:hover{background:var(--secondary-background-color)}.identity{min-width:0;display:flex;flex-direction:column;gap:3px}.name{font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.meta{font-size:12px}.current{display:flex;flex-direction:column;align-items:flex-end;gap:2px}.current-value{font-weight:650;white-space:nowrap}.source{font-size:10px}.position-gain{min-width:66px;text-align:right;font-size:13px;font-weight:650}.chevron{text-align:center;font-size:18px;color:var(--secondary-text-color)}
     .detail{padding:4px 0 18px}.detail-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:14px}.metric{padding:11px;border-radius:10px;background:var(--secondary-background-color);min-width:0}.metric span,.metric small{display:block;font-size:11px;color:var(--secondary-text-color)}.metric strong{display:block;font-size:15px;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.metric small{font-size:10px;margin-top:4px}.metric.primary strong{font-size:19px}.periods{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px}.period{border:0;border-radius:7px;padding:5px 8px;background:transparent;color:var(--secondary-text-color);cursor:pointer;font-size:11px;font-weight:650}.period:hover,.period.selected{background:var(--secondary-background-color);color:var(--primary-text-color)}
     .chart{border-radius:10px;background:var(--secondary-background-color);overflow:hidden}.chart-head{display:flex;justify-content:space-between;align-items:end;padding:10px 12px 0;font-size:12px}.chart-head strong{display:block;font-size:13px}.chart-head div span{display:block;color:var(--secondary-text-color);font-size:10px;margin-top:2px}.chart-head>span{font-weight:650}.chart-body{position:relative;height:190px}.price-chart{display:block;width:100%;height:190px}.tooltip{position:absolute;top:8px;transform:translateX(-50%);pointer-events:none;padding:6px 8px;border-radius:7px;background:var(--card-background-color,#fff);box-shadow:var(--ha-card-box-shadow,0 2px 8px rgba(0,0,0,.15));font-size:11px;white-space:nowrap;z-index:2}.tooltip strong{display:block}.tooltip span{display:block;color:var(--secondary-text-color);font-size:9px;margin-top:2px}.chart-message{height:190px;display:grid;place-items:center;color:var(--secondary-text-color);font-size:12px}
-    @media(max-width:700px){.detail-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:600px){.summary{grid-template-columns:minmax(0,1fr) auto 28px}.position-gain{display:none}.detail-grid{gap:7px}.metric{padding:9px}.portfolio-strip{grid-template-columns:1fr 1fr}.portfolio-strip>div:last-child{display:none}}
+    @media(max-width:700px){.detail-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:600px){.summary{grid-template-columns:minmax(0,1fr) auto 28px}.position-gain{display:none}.detail-grid{gap:7px}.metric{padding:9px}.portfolio-strip{grid-template-columns:1fr 1fr}.portfolio-strip>div:last-child{display:none}.header{gap:10px}.total{font-size:21px}}
   `; }
 
   number(value) { return new Intl.NumberFormat(undefined, { maximumFractionDigits: 4 }).format(Number(value) || 0); }
@@ -304,7 +349,7 @@ class InvestmentTrackerCardEditor extends HTMLElement {
       const index = Number(row.dataset.index);
       row.querySelectorAll('[data-key]').forEach(el => el.addEventListener(el.tagName === 'SELECT' ? 'change' : 'input', () => {
         const holdings = this.config.holdings.map((holding, idx) => idx === index ? { ...holding, [el.dataset.key]: this.parseValue(el.dataset.key, el.value) } : holding);
-        this.commit({ holdings });
+        this.commit({ holdings }, el);
       }));
       row.querySelector('[data-action="remove"]').addEventListener('click', () => this.commit({ holdings: this.config.holdings.filter((_, idx) => idx !== index) }));
       row.querySelector('[data-action="search"]').addEventListener('click', () => this.searchIsin(index));
@@ -320,8 +365,7 @@ class InvestmentTrackerCardEditor extends HTMLElement {
     this._search[index] = { loading: true }; this.render();
     let timeout;
     try {
-      const controller = new AbortController();
-      timeout = setTimeout(() => controller.abort(), 10000);
+      const controller = new AbortController(); timeout = setTimeout(() => controller.abort(), 10000);
       const response = await fetch('https://api.openfigi.com/v3/mapping', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify([{ idType: 'ID_ISIN', idValue: isin }]), signal: controller.signal });
       if (!response.ok) throw new Error(`Security lookup returned HTTP ${response.status}.`);
       const payload = await response.json();
@@ -332,9 +376,7 @@ class InvestmentTrackerCardEditor extends HTMLElement {
     } catch (err) {
       console.warn('Investment Tracker Card ISIN lookup error', err);
       this._search[index] = { error: err.name === 'AbortError' ? 'Security lookup timed out.' : err.message || 'Security lookup failed.' };
-    } finally {
-      clearTimeout(timeout);
-    }
+    } finally { clearTimeout(timeout); }
     this.render();
   }
 
@@ -346,10 +388,16 @@ class InvestmentTrackerCardEditor extends HTMLElement {
     this.commit({ holdings });
   }
 
-  commit(changes) {
+  commit(changes, sourceElement = null) {
     this.config = { ...this.config, ...changes };
     this.dispatchEvent(new CustomEvent('config-changed', { detail: { config: this.config }, bubbles: true, composed: true }));
+    if (!sourceElement) { this.render(); return; }
+    const key = sourceElement.dataset?.key;
+    const selectionStart = sourceElement.selectionStart;
+    const selectionEnd = sourceElement.selectionEnd;
     this.render();
+    const replacement = key ? this.shadowRoot.querySelector(`[data-key="${CSS.escape(key)}"]`) : null;
+    if (replacement && document.activeElement !== replacement) { replacement.focus(); if (selectionStart !== null) replacement.setSelectionRange(selectionStart, selectionEnd); }
   }
 
   escape(value) { return String(value).replace(/[&<>\"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', "'": '&#39;' }[c])); }
