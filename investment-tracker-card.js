@@ -61,16 +61,17 @@ class InvestmentTrackerCard extends HTMLElement {
     const invested = Number(item.invested) || 0;
     const price = this.price(item);
     const fx = this.fx(item);
+    const investedDisplay = fx === null ? null : invested * fx;
     const current = price === null || fx === null ? null : shares * price * fx;
-    const gain = current === null ? null : current - invested;
-    const gainPct = current === null || !invested ? null : gain / invested * 100;
-    return { shares, invested, price, fx, current, gain, gainPct };
+    const gain = current === null || investedDisplay === null ? null : current - investedDisplay;
+    const gainPct = gain === null || !investedDisplay ? null : gain / investedDisplay * 100;
+    return { shares, invested, investedDisplay, price, fx, current, gain, gainPct };
   }
 
   totals() {
     return this.config.holdings.reduce((out, item) => {
       const p = this.position(item);
-      out.invested += p.invested;
+      if (p.investedDisplay === null) out.missing += 1; else out.invested += p.investedDisplay;
       if (p.current === null) out.missing += 1; else out.current += p.current;
       return out;
     }, { invested: 0, current: 0, missing: 0 });
@@ -83,7 +84,7 @@ class InvestmentTrackerCard extends HTMLElement {
     const pct = total.invested ? gain / total.invested * 100 : null;
     this.shadowRoot.innerHTML = `<style>${this.styles()}</style><ha-card class="card">
       <div class="header"><div><div class="title">${this.escape(this.config.title)}</div><div class="caption">${this.config.holdings.length} holdings · ${this.escape(this.config.display_currency)}</div></div>
-      <div class="header-value"><div class="total">${total.missing ? '—' : this.money(total.current)}</div><div class="${this.gainClass(gain)}">${total.missing ? 'Waiting for price data' : `${this.signedMoney(gain)} · ${this.signedPercent(pct)}`}</div></div></div>
+      <div class="header-value"><div class="total">${total.missing ? '—' : this.money(total.current)}</div><div class="${this.gainClass(gain)}">${total.missing ? 'Waiting for price / FX data' : `${this.signedMoney(gain)} · ${this.signedPercent(pct)}`}</div></div></div>
       <div class="holdings">${this.config.holdings.map((item) => this.renderHolding(item)).join('')}</div>
     </ha-card>`;
     this.bind();
@@ -93,11 +94,10 @@ class InvestmentTrackerCard extends HTMLElement {
     const id = this.id(item);
     const p = this.position(item);
     const open = this._expanded === id;
-    const currency = item.currency || this.config.display_currency;
     return `<div class="holding" data-id="${this.escape(id)}">
       <button class="summary" type="button" aria-expanded="${open}">
-        <span class="identity"><span class="name">${this.escape(item.name || item.symbol || item.isin)}</span><span class="meta">${this.number(p.shares)} shares · Invested ${this.money(p.invested)}${item.isin ? ` · ${this.escape(item.isin)}` : ''}</span></span>
-        <span class="current"><span class="current-value">${p.current === null ? '—' : this.money(p.current)}</span><span class="source">${this.escape(String(currency))}</span></span>
+        <span class="identity"><span class="name">${this.escape(item.name || item.symbol || item.isin)}</span><span class="meta">${this.number(p.shares)} shares · Invested ${p.investedDisplay === null ? '—' : this.money(p.investedDisplay)}${item.isin ? ` · ${this.escape(item.isin)}` : ''}</span></span>
+        <span class="current"><span class="current-value">${p.current === null ? '—' : this.money(p.current)}</span><span class="source">Value in ${this.escape(this.config.display_currency)}</span></span>
         <span class="position-gain ${this.gainClass(p.gain)}">${this.signedPercent(p.gainPct)}</span><span class="chevron">${open ? '⌃' : '⌄'}</span>
       </button>${open ? this.renderDetail(item, p) : ''}
     </div>`;
@@ -109,8 +109,8 @@ class InvestmentTrackerCard extends HTMLElement {
     const history = this._history[id]?.[period] || [];
     const loading = this._loading[id]?.[period];
     return `<div class="detail"><div class="detail-top">
-      <div><div class="detail-value">${p.price === null ? '—' : this.money(p.price, item.currency || this.config.display_currency)}</div><div class="detail-label">Current price</div></div>
-      <div class="detail-stat"><span>Invested</span><strong>${this.money(p.invested)}</strong></div><div class="detail-stat"><span>Value</span><strong>${p.current === null ? '—' : this.money(p.current)}</strong></div>
+      <div><div class="detail-value">${p.price === null ? '—' : this.money(p.price, item.currency || this.config.display_currency)}</div><div class="detail-label">Current price · ${this.escape(item.currency || this.config.display_currency)}</div></div>
+      <div class="detail-stat"><span>Invested</span><strong>${p.investedDisplay === null ? '—' : this.money(p.investedDisplay)}</strong></div><div class="detail-stat"><span>Value</span><strong>${p.current === null ? '—' : this.money(p.current)}</strong></div>
     </div><div class="periods">${PERIODS.map((x) => `<button class="period ${x === period ? 'selected' : ''}" data-period="${x}" type="button">${x}</button>`).join('')}</div>
     <div class="chart">${loading ? '<div class="chart-message">Loading history…</div>' : this.chart(history, item)}</div></div>`;
   }
@@ -217,6 +217,7 @@ class InvestmentTrackerCardEditor extends HTMLElement {
       <div class="field"><div class="label">ISIN (primary security ID)</div><div class="search-row"><input data-key="isin" value="${this.escape(h.isin||'')}" placeholder="e.g. US0378331005"><button class="search-button" data-action="search" type="button">Search ISIN</button></div>${search.loading?'<div class="search-status">Searching security master…</div>':''}${search.error?`<div class="search-status">${this.escape(search.error)}</div>`:''}${results?`<div class="results">${results}</div>`:''}</div>
       <div class="field"><div class="label">Name</div><input data-key="name" value="${this.escape(h.name||'')}" placeholder="Apple Inc."></div>
       <div class="field"><div class="label">Ticker / symbol</div><input data-key="symbol" value="${this.escape(h.symbol||'')}" placeholder="AAPL"></div>
+      <div class="field"><div class="label">Exchange</div><input data-key="exchange" value="${this.escape(h.exchange||'')}" placeholder="NASDAQ"></div>
       <div class="field"><div class="label">Currency</div><select data-key="currency">${this.currencyOptions(currency)}</select></div>
       <div class="field"><div class="label">Shares / units</div><input data-key="shares" type="number" step="any" value="${this.escape(h.shares??0)}"></div>
       <div class="field"><div class="label">Invested amount (${this.escape(currency)})</div><input data-key="invested" type="number" step="0.01" value="${this.escape(h.invested??0)}"></div>
@@ -228,7 +229,7 @@ class InvestmentTrackerCardEditor extends HTMLElement {
   bind() {
     this.shadowRoot.querySelector('#title').addEventListener('input', (e)=>this.commit({title:e.target.value}));
     this.shadowRoot.querySelector('#display_currency').addEventListener('change', (e)=>this.commit({display_currency:e.target.value}));
-    this.shadowRoot.querySelector('#add').addEventListener('click', ()=>this.commit({holdings:[...this.config.holdings,{isin:'',name:'',symbol:'',currency:this.config.display_currency,shares:0,invested:0,price_entity:'',fx_rate_entity:''}]}));
+    this.shadowRoot.querySelector('#add').addEventListener('click', ()=>this.commit({holdings:[...this.config.holdings,{isin:'',name:'',symbol:'',exchange:'',currency:this.config.display_currency,shares:0,invested:0,price_entity:'',fx_rate_entity:''}]}));
     this.shadowRoot.querySelectorAll('.holding').forEach((row)=>{
       const i=Number(row.dataset.index);
       row.querySelectorAll('[data-key]').forEach((el)=>el.addEventListener(el.tagName==='SELECT'?'change':'input',()=>{
@@ -249,16 +250,22 @@ class InvestmentTrackerCardEditor extends HTMLElement {
       this._search[index]={error:'Enter a valid 12-character ISIN before searching.'}; this.render(); return;
     }
     this._search[index]={loading:true}; this.render();
+    const controller = new AbortController();
+    const timeout = setTimeout(()=>controller.abort(),10000);
     try {
-      const response=await fetch('https://api.openfigi.com/v3/mapping',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify([{idType:'ID_ISIN',idValue:isin}])});
+      const response=await fetch('https://api.openfigi.com/v3/mapping',{method:'POST',headers:{'Content-Type':'application/json','Accept':'application/json'},body:JSON.stringify([{idType:'ID_ISIN',idValue:isin}]),signal:controller.signal});
       if(!response.ok) throw new Error(`Security lookup returned HTTP ${response.status}.`);
       const payload=await response.json();
-      const results=Array.isArray(payload?.[0]?.data)?payload[0].data:[];
+      const resultBlock=payload?.[0];
+      if(resultBlock?.error) throw new Error(String(resultBlock.error));
+      const results=Array.isArray(resultBlock?.data)?resultBlock.data:[];
       if(!results.length) throw new Error('No security was found for that ISIN.');
       this._search[index]={results:results.slice(0,10)};
     } catch(err) {
       console.warn('Investment Tracker Card ISIN lookup error',err);
-      this._search[index]={error:err.message||'Security lookup failed.'};
+      this._search[index]={error:err.name==='AbortError'?'Security lookup timed out.':(err.message||'Security lookup failed.')};
+    } finally {
+      clearTimeout(timeout);
     }
     this.render();
   }
@@ -267,8 +274,8 @@ class InvestmentTrackerCardEditor extends HTMLElement {
     const result=this._search[index]?.results?.[resultIndex];
     if(!result) return;
     const holdings=this.config.holdings.map((h,i)=>i===index?{...h,name:result.name||h.name,symbol:result.ticker||h.symbol,exchange:result.exchangeCode||result.exchCode||h.exchange}:h);
-    this.commit({holdings});
     this._search[index]={};
+    this.commit({holdings});
   }
 
   commit(changes){ this.config={...this.config,...changes}; this.dispatchEvent(new CustomEvent('config-changed',{detail:{config:this.config},bubbles:true,composed:true})); }
