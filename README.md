@@ -6,7 +6,8 @@ A reusable Home Assistant Lovelace card for tracking stocks and ETFs with live H
 
 The card currently supports:
 
-- Portfolio invested amount, current value and gain percentage
+- Portfolio invested amount, current value and lifetime gain percentage
+- Portfolio-level daily movement with multi-currency conversion
 - Portfolio allocation percentage per holding
 - Configurable holdings with shares/units and invested amount
 - Selectable portfolio display currency
@@ -88,25 +89,28 @@ The lookup may return more than one instrument for an ISIN. Select the listing t
 
 The card deliberately separates the UI from the market-data provider. Users can use Yahoo Finance, another Home Assistant integration, REST sensors, or any other source that creates numeric Home Assistant price and FX sensors.
 
+### Daily portfolio movement
+
+The portfolio **Today** figure uses Home Assistant Recorder history for each holding's price entity and, where required, its FX entity. The card compares the current position value with the earliest available value in the trailing 24-hour Recorder window. Foreign holdings are converted into the portfolio display currency using the historical FX value. If complete historical data is not available for every holding, the card shows `Today · —` rather than presenting a misleading partial result.
+
 ### Charts
 
-When a holding is expanded, the card requests historical values for its `price_entity` from Home Assistant Recorder. The chart is therefore independent of the market-data provider. The provider only needs to keep the price sensor updated. The card handles missing or insufficient history without breaking the holding view.
+When a holding is expanded, the card requests historical values for its `price_entity` from Home Assistant Recorder. The chart is therefore independent of the market-data provider. The provider only needs to keep the price sensor updated. The card handles missing or insufficient history without breaking the holding view. MAX requests history from 2000 onward.
 
-## Planned next steps
+## Market-data examples
 
-- Improve chart scaling and add clearer time-axis context
-- Add daily portfolio movement and daily change indicators
-- Add ready-made market-data sensor examples
-- Add provider-specific instrument mapping where appropriate
-- Support transaction history and partial buys/sells
-- Add optional watchlist/trading sections
-- Add AI portfolio/event summaries and alerts
-- Prepare a tagged HACS release
+See `examples/market-data-sensors.yaml` for provider-agnostic examples of price and FX entity wiring.
+
+## Validation
+
+The repository includes GitHub Actions for JavaScript syntax validation and HACS plugin validation.
 
 ## Installation readiness
 
-This repository is still a development build. **Do not install it as the production version yet.** A HACS-ready release will be announced only after the card has passed the available automated validation and the core Home Assistant behaviour has been checked.
+This repository is currently a **pre-release test build**. It is suitable for installing into a test Home Assistant instance so the card's Home Assistant Recorder behaviour and visual editor can be validated before the first tagged release.
+
+A formal HACS release will use a versioned GitHub release after this real-world test is complete.
 
 ## Status
 
-Development — the current feature branch is being stabilized before the first tagged release.
+Pre-release testing — the first HACS installation is being validated before the initial tagged release.
