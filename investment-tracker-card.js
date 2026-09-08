@@ -16,7 +16,7 @@ class InvestmentTrackerCard extends HTMLElement {
     this._history = {};
     this._loading = {};
     this._hover = {};
-    this._lastHassRender = 0;
+    this._lastHassSignature = '';
     this.render();
   }
 
@@ -25,7 +25,12 @@ class InvestmentTrackerCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
-    if (this.config) this.render();
+    if (!this.config) return;
+    const signature = this.config.holdings.map(item => `${item.price_entity || ''}:${hass.states[item.price_entity]?.state || ''}|${item.fx_rate_entity || ''}:${hass.states[item.fx_rate_entity]?.state || ''}`).join(';');
+    if (signature !== this._lastHassSignature) {
+      this._lastHassSignature = signature;
+      this.render();
+    }
   }
 
   getCardSize() { return Math.max(4, 4 + (this.config?.holdings?.length || 0) * 2); }
@@ -176,7 +181,11 @@ class InvestmentTrackerCard extends HTMLElement {
 
     this.shadowRoot.querySelectorAll('.price-chart').forEach(svg => {
       svg.addEventListener('mousemove', event => this.chartHover(event, svg));
-      svg.addEventListener('mouseleave', () => { delete this._hover[svg.dataset.chartId]; this.render(); });
+      svg.addEventListener('mouseleave', () => {
+        delete this._hover[svg.dataset.chartId];
+        const tooltip = svg.closest('.chart-body')?.querySelector('.tooltip');
+        tooltip?.remove();
+      });
     });
   }
 
@@ -221,7 +230,7 @@ class InvestmentTrackerCard extends HTMLElement {
     start.setDate(start.getDate() - (PERIOD_DAYS[period] || 31));
     try {
       const result = await this._hass.callWS({ type: 'history/history_during_period', start_time: start.toISOString(), end_time: end.toISOString(), entity_ids: [item.price_entity], minimal_response: true, no_attributes: true, significant_changes_only: false });
-      const states = Array.isArray(result) ? (result[0] || []) : [];
+      const states = Array.isArray(result) ? (result[0] || []) : (result?.[item.price_entity] || []);
       const points = states.map(s => ({ time: new Date(s.last_changed || s.last_updated).getTime(), value: Number.parseFloat(s.state) })).filter(x => Number.isFinite(x.time) && Number.isFinite(x.value));
       this._history[id] = { ...(this._history[id] || {}), [period]: points };
     } catch (err) {
@@ -309,11 +318,11 @@ class InvestmentTrackerCardEditor extends HTMLElement {
     const isin = String(this.config.holdings[index]?.isin || '').trim().toUpperCase();
     if (!/^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(isin)) { this._search[index] = { error: 'Enter a valid 12-character ISIN before searching.' }; this.render(); return; }
     this._search[index] = { loading: true }; this.render();
+    let timeout;
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 10000);
+      timeout = setTimeout(() => controller.abort(), 10000);
       const response = await fetch('https://api.openfigi.com/v3/mapping', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify([{ idType: 'ID_ISIN', idValue: isin }]), signal: controller.signal });
-      clearTimeout(timeout);
       if (!response.ok) throw new Error(`Security lookup returned HTTP ${response.status}.`);
       const payload = await response.json();
       if (payload?.[0]?.error) throw new Error(payload[0].error);
@@ -323,6 +332,8 @@ class InvestmentTrackerCardEditor extends HTMLElement {
     } catch (err) {
       console.warn('Investment Tracker Card ISIN lookup error', err);
       this._search[index] = { error: err.name === 'AbortError' ? 'Security lookup timed out.' : err.message || 'Security lookup failed.' };
+    } finally {
+      clearTimeout(timeout);
     }
     this.render();
   }
