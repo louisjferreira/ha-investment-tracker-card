@@ -1,3 +1,20 @@
+const CURRENCIES = [
+  ['GBP', '£', 'British Pound'],
+  ['USD', '$', 'US Dollar'],
+  ['EUR', '€', 'Euro'],
+  ['ZAR', 'R', 'South African Rand'],
+  ['AUD', 'A$', 'Australian Dollar'],
+  ['CAD', 'C$', 'Canadian Dollar'],
+  ['CHF', 'CHF', 'Swiss Franc'],
+  ['JPY', '¥', 'Japanese Yen'],
+  ['NZD', 'NZ$', 'New Zealand Dollar'],
+  ['SGD', 'S$', 'Singapore Dollar'],
+  ['HKD', 'HK$', 'Hong Kong Dollar'],
+  ['SEK', 'kr', 'Swedish Krona'],
+  ['NOK', 'kr', 'Norwegian Krone'],
+  ['DKK', 'kr', 'Danish Krone'],
+];
+
 class InvestmentTrackerCard extends HTMLElement {
   setConfig(config) {
     if (!config || !Array.isArray(config.holdings)) {
@@ -11,6 +28,9 @@ class InvestmentTrackerCard extends HTMLElement {
     this.render();
   }
 
+  static getConfigElement() { return document.createElement('investment-tracker-card-editor'); }
+  static getStubConfig() { return { title: 'Investment Tracker', display_currency: 'GBP', holdings: [] }; }
+
   set hass(hass) {
     this._hass = hass;
     if (this.config) this.render();
@@ -18,13 +38,12 @@ class InvestmentTrackerCard extends HTMLElement {
 
   getCardSize() { return Math.max(4, 3 + (this.config?.holdings?.length || 0) * 2); }
 
-  id(item) { return String(item.id || item.symbol || item.name); }
+  id(item) { return String(item.isin || item.id || item.symbol || item.name); }
 
   price(item) {
     const entity = item.price_entity;
     if (!entity || !this._hass) return null;
-    const state = this._hass.states[entity];
-    const value = Number.parseFloat(state?.state);
+    const value = Number.parseFloat(this._hass.states[entity]?.state);
     return Number.isFinite(value) ? value : null;
   }
 
@@ -61,7 +80,7 @@ class InvestmentTrackerCard extends HTMLElement {
     const gain = total.current - total.invested;
     const pct = total.invested ? gain / total.invested * 100 : null;
     this.shadowRoot.innerHTML = `<style>${this.styles()}</style><ha-card class="card">
-      <div class="header"><div><div class="title">${this.escape(this.config.title)}</div><div class="caption">${this.config.holdings.length} holdings</div></div>
+      <div class="header"><div><div class="title">${this.escape(this.config.title)}</div><div class="caption">${this.config.holdings.length} holdings · ${this.escape(this.config.display_currency)}</div></div>
       <div class="header-value"><div class="total">${total.missing ? '—' : this.money(total.current)}</div><div class="${this.gainClass(gain)}">${total.missing ? 'Waiting for price data' : `${this.signedMoney(gain)} · ${this.signedPercent(pct)}`}</div></div></div>
       <div class="holdings">${this.config.holdings.map((item) => this.renderHolding(item)).join('')}</div>
     </ha-card>`;
@@ -75,7 +94,7 @@ class InvestmentTrackerCard extends HTMLElement {
     const currency = item.currency || this.config.display_currency;
     return `<div class="holding" data-id="${this.escape(id)}">
       <button class="summary" type="button" aria-expanded="${open}">
-        <span class="identity"><span class="name">${this.escape(item.name || item.symbol)}</span><span class="meta">${this.number(p.shares)} shares · Invested ${this.money(p.invested)}</span></span>
+        <span class="identity"><span class="name">${this.escape(item.name || item.symbol || item.isin)}</span><span class="meta">${this.number(p.shares)} shares · Invested ${this.money(p.invested)}${item.isin ? ` · ${this.escape(item.isin)}` : ''}</span></span>
         <span class="current"><span class="current-value">${p.current === null ? '—' : this.money(p.current)}</span><span class="source">${this.escape(String(currency))}</span></span>
         <span class="position-gain ${this.gainClass(p.gain)}">${this.signedPercent(p.gainPct)}</span><span class="chevron">${open ? '⌃' : '⌄'}</span>
       </button>${open ? this.renderDetail(item, p) : ''}
@@ -160,4 +179,66 @@ class InvestmentTrackerCard extends HTMLElement {
   escape(value){ return String(value).replace(/[&<>"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 }
 
+class InvestmentTrackerCardEditor extends HTMLElement {
+  setConfig(config) {
+    this.config = { title:'Investment Tracker', display_currency:'GBP', holdings:[], ...config };
+    this.render();
+  }
+
+  set hass(hass) { this._hass = hass; }
+
+  render() {
+    if (!this.shadowRoot) this.attachShadow({mode:'open'});
+    this.shadowRoot.innerHTML = `<style>
+      .wrap{display:flex;flex-direction:column;gap:14px;padding:8px 0}.field{display:flex;flex-direction:column;gap:5px}.label{font-size:12px;color:var(--secondary-text-color)}input,select{box-sizing:border-box;width:100%;padding:9px;border:1px solid var(--divider-color);border-radius:8px;background:var(--card-background-color);color:var(--primary-text-color);font:inherit}.holding{border:1px solid var(--divider-color);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:10px}.holding-head{display:flex;justify-content:space-between;align-items:center;font-weight:650}.remove{border:0;background:transparent;color:var(--error-color);cursor:pointer}.actions{display:flex;gap:8px}.actions button{border:0;border-radius:8px;padding:8px 12px;background:var(--primary-color);color:var(--text-primary-color,#fff);cursor:pointer}.hint{font-size:11px;color:var(--secondary-text-color);line-height:1.4}
+    </style><div class="wrap">
+      <div class="field"><div class="label">Card title</div><input id="title" value="${this.escape(this.config.title)}"></div>
+      <div class="field"><div class="label">Portfolio display currency</div><select id="display_currency">${this.currencyOptions(this.config.display_currency)}</select></div>
+      <div id="holdings">${this.config.holdings.map((h,i)=>this.holding(h,i)).join('')}</div>
+      <div class="actions"><button id="add" type="button">Add holding</button></div>
+      <div class="hint">Use an ISIN as the security's primary identifier. The ticker is retained for market-data lookup. The editor will keep the selected security's ISIN, symbol and currency together.</div>
+    </div>`;
+    this.bind();
+  }
+
+  currencyOptions(selected) { return CURRENCIES.map(([code,symbol,name]) => `<option value="${code}" ${code===selected?'selected':''}>${symbol} ${code} — ${name}</option>`).join(''); }
+
+  holding(h,i) {
+    const currency = h.currency || this.config.display_currency;
+    return `<div class="holding" data-index="${i}"><div class="holding-head"><span>Holding ${i+1}</span><button class="remove" data-action="remove" type="button">Remove</button></div>
+      <div class="field"><div class="label">ISIN (primary security ID)</div><input data-key="isin" value="${this.escape(h.isin||'')}" placeholder="e.g. US0378331005"></div>
+      <div class="field"><div class="label">Name</div><input data-key="name" value="${this.escape(h.name||'')}" placeholder="Apple Inc."></div>
+      <div class="field"><div class="label">Ticker / symbol</div><input data-key="symbol" value="${this.escape(h.symbol||'')}" placeholder="AAPL"></div>
+      <div class="field"><div class="label">Currency</div><select data-key="currency">${this.currencyOptions(currency)}</select></div>
+      <div class="field"><div class="label">Shares / units</div><input data-key="shares" type="number" step="any" value="${this.escape(h.shares??0)}"></div>
+      <div class="field"><div class="label">Invested amount</div><input data-key="invested" type="number" step="0.01" value="${this.escape(h.invested??0)}"></div>
+      <div class="field"><div class="label">Price entity</div><input data-key="price_entity" value="${this.escape(h.price_entity||'')}" placeholder="sensor.apple_price"></div>
+      <div class="field"><div class="label">FX rate entity (source currency → portfolio currency)</div><input data-key="fx_rate_entity" value="${this.escape(h.fx_rate_entity||'')}" placeholder="sensor.usd_gbp"></div>
+    </div>`;
+  }
+
+  bind() {
+    this.shadowRoot.querySelector('#title').addEventListener('input', (e)=>this.commit({title:e.target.value}));
+    this.shadowRoot.querySelector('#display_currency').addEventListener('change', (e)=>this.commit({display_currency:e.target.value}));
+    this.shadowRoot.querySelector('#add').addEventListener('click', ()=>{
+      this.commit({holdings:[...this.config.holdings,{isin:'',name:'',symbol:'',currency:this.config.display_currency,shares:0,invested:0,price_entity:'',fx_rate_entity:''}]});
+    });
+    this.shadowRoot.querySelectorAll('.holding').forEach((row)=>{
+      const i=Number(row.dataset.index);
+      row.querySelectorAll('[data-key]').forEach((el)=>el.addEventListener(el.tagName==='SELECT'?'change':'input',()=>{
+        const holdings=this.config.holdings.map((h,idx)=>idx===i?{...h,[el.dataset.key]:this.parseValue(el.dataset.key,el.value)}:h);
+        this.commit({holdings});
+      }));
+      row.querySelector('[data-action="remove"]').addEventListener('click',()=>this.commit({holdings:this.config.holdings.filter((_,idx)=>idx!==i)}));
+    });
+  }
+
+  parseValue(key,value){ if(key==='shares'||key==='invested') return Number(value)||0; return value; }
+
+  commit(changes){ this.config={...this.config,...changes}; this.dispatchEvent(new CustomEvent('config-changed',{detail:{config:this.config},bubbles:true,composed:true})); }
+
+  escape(value){ return String(value).replace(/[&<>"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+}
+
 customElements.define('investment-tracker-card', InvestmentTrackerCard);
+customElements.define('investment-tracker-card-editor', InvestmentTrackerCardEditor);
