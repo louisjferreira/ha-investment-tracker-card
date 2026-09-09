@@ -16,6 +16,7 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.storage import Store
+from homeassistant.util import dt as dt_util
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -65,7 +66,7 @@ class RefreshManager:
         self._reset_if_new_day()
 
     def _today(self) -> str:
-        return datetime.now(self.hass.config.time_zone).date().isoformat()
+        return dt_util.now().date().isoformat()
 
     def _reset_if_new_day(self) -> None:
         today = self._today()
@@ -87,7 +88,7 @@ class RefreshManager:
                 return False, self.limit - self.count, "The Yahoo Finance refresh service is not available."
             await self.hass.services.async_call("yahoofinance", "refresh_symbols", {}, blocking=True)
             self.count += 1
-            self.last_refresh = datetime.now(self.hass.config.time_zone).isoformat()
+            self.last_refresh = dt_util.now().isoformat()
             await self._save()
             return True, max(0, self.limit - self.count), None
 
@@ -97,7 +98,7 @@ class RefreshManager:
             return
         try:
             await self.hass.services.async_call("yahoofinance", "refresh_symbols", {}, blocking=True)
-            self.last_refresh = datetime.now(self.hass.config.time_zone).isoformat()
+            self.last_refresh = dt_util.now().isoformat()
             await self._save()
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning("Investment Tracker automatic refresh failed: %s", err)
