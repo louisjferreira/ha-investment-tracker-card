@@ -94,7 +94,7 @@ class MarketDataManager:
 
     @staticmethod
     def _meta_currency(result: dict[str, Any]) -> str:
-        return str((result.get("meta") or {}).get("currency") or "").upper()
+        return str((result.get("meta") or {}).get("currency") or "").strip().upper()
 
     @staticmethod
     def _currency_matches(result: dict[str, Any], source_currency: str | None) -> bool:
@@ -104,17 +104,16 @@ class MarketDataManager:
         actual = MarketDataManager._meta_currency(result)
         if not actual:
             return True
-        # Yahoo uses GBp/GBX for London prices quoted in pence.
-        if expected == "GBP" and actual in {"GBP", "GBP".upper(), "GBX", "GBP".replace("GBP", "GBP")}:
-            return True
-        if expected == "GBP" and actual == "GBP":
+        # Yahoo can report London-listed prices as GBp/GBX.
+        if expected == "GBP" and actual in {"GBP", "GBX"}:
             return True
         return actual == expected
 
     @staticmethod
     def _price_scale(result: dict[str, Any]) -> float:
-        currency = str((result.get("meta") or {}).get("currency") or "").upper()
-        return 0.01 if currency in {"GBX", "GBp".upper()} else 1.0
+        # Preserve case so a real GBP FX rate is not mistaken for GBp pence.
+        currency = str((result.get("meta") or {}).get("currency") or "").strip()
+        return 0.01 if currency in {"GBp", "GBX"} else 1.0
 
     async def _chart(self, symbol: str, range_: str = "5d", interval: str = "1d") -> dict[str, Any]:
         symbol = symbol.strip().upper()
@@ -144,10 +143,13 @@ class MarketDataManager:
         resolved = self.resolved_symbols.get(original)
         candidates = [resolved] if resolved else self._symbol_candidates(original, source_currency)
         last_error: Exception | None = None
-        for candidate in candidates:
+        for index, candidate in enumerate(candidates):
             try:
                 result = await self._chart(candidate, range_, interval)
-                if not self._currency_matches(result, source_currency):
+                # The explicit/plain ticker wins if Yahoo resolves it. A holding's
+                # display currency does not imply that its security is listed there.
+                # Only validate currency on qualified fallback candidates.
+                if index > 0 and not self._currency_matches(result, source_currency):
                     raise RuntimeError(
                         f"Yahoo returned {self._meta_currency(result) or 'an unknown currency'} for {candidate}; "
                         f"expected {source_currency}."
@@ -160,8 +162,8 @@ class MarketDataManager:
         raise RuntimeError(str(last_error) if last_error else f"No market data returned for {original}.")
 
     @staticmethod
-    def _latest(result: dict[str, Any]) -> float | None:
-        scale = MarketDataManager._price_scale(result)
+    def _latest(result: dict[str, Any], scale_price: bool = True) -> float | None:
+        scale = MarketDataManager._price_scale(result) if scale_price else 1.0
         meta = result.get("meta") or {}
         for key in ("regularMarketPrice", "previousClose"):
             value = meta.get(key)
@@ -206,7 +208,8 @@ class MarketDataManager:
             fx = 1.0
             if source_currency != display_currency:
                 fx_result = await self._chart(self._fx_symbol(source_currency, display_currency), "5d", "1d")
-                fx = self._latest(fx_result) or 0.0
+                # FX is a rate, not a security price; never apply GBp scaling here.
+                fx = self._latest(fx_result, scale_price=False) or 0.0
                 if fx <= 0:
                     raise RuntimeError(f"No FX rate is available for {source_currency} → {display_currency}.")
             data = {
