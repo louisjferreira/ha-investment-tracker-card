@@ -27,7 +27,7 @@ CONF_MANUAL_REFRESH_LIMIT = "manual_refresh_limit"
 CONF_OPENFIGI_API_KEY = "openfigi_api_key"
 DEFAULT_DAILY_REFRESH_TIME = "23:15:00"
 DEFAULT_MANUAL_REFRESH_LIMIT = 3
-STORAGE_VERSION = 2
+STORAGE_VERSION = 1
 STORAGE_KEY = f"{DOMAIN}.refresh_state"
 ISIN_RE = re.compile(r"^[A-Z]{2}[A-Z0-9]{9}[0-9]$")
 SYMBOL_RE = re.compile(r"^[A-Z0-9^._=-]{1,32}$")
