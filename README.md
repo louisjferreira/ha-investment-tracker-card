@@ -1,8 +1,35 @@
 # Home Assistant Investment Tracker Card
 
-A reusable Home Assistant Lovelace card for tracking stocks and ETFs with automatic market data.
+![Investment Tracker Card](assets/example-card.svg)
+
+A polished Home Assistant Lovelace card for tracking stocks and ETFs with automatic market data, multi-currency support, ISIN identification and historical performance charts.
 
 ![HACS validation](https://github.com/louisjferreira/ha-investment-tracker-card/actions/workflows/hacs.yml/badge.svg)
+
+## Features
+
+- 📈 Portfolio invested amount, current value and lifetime gain
+- 💱 Multi-currency portfolio calculations with automatic FX conversion
+- 💹 Automatic current price and market data
+- 🔎 ISIN-based security identification and listing selection
+- 📊 Historical charts from 1D through MAX
+- 🔄 Rate-limited manual refresh with persistent daily quota
+- ⏰ Automatic daily market-data refresh
+- 🏠 Responsive Home Assistant theme-aware UI
+- 🧩 HACS distribution
+- 🛠️ Optional legacy Home Assistant price/FX entity overrides
+
+## See it in action
+
+### Portfolio view
+
+![Investment Tracker portfolio example](assets/example-card.svg)
+
+### Key capabilities
+
+![Investment Tracker features](assets/example-features.svg)
+
+The card is designed to keep the important information visible at a glance while allowing each holding to be expanded for more detail.
 
 ## Installation
 
@@ -137,22 +164,11 @@ The card's **Refresh** button shows the remaining daily manual quota, for exampl
 
 The backend persists the counter. Automatic daily refreshes do not consume the manual quota.
 
-## Current features
+## Branding
 
-- Portfolio invested amount, current value and lifetime gain
-- Multi-currency portfolio calculations
-- Automatic current price and FX data
-- Automatic historical market data for charts
-- ISIN-based security identification
-- Server-side OpenFIGI security lookup
-- Multiple OpenFIGI listing selection
-- Optional legacy Home Assistant price/FX entity overrides
-- Manual market-data refresh with persistent daily quota
-- Automatic daily refresh
-- Responsive Home Assistant theme-aware UI
-- Interactive historical charts
-- Chart periods from 1D to MAX
-- HACS distribution
+The project includes Home Assistant local brand assets under `custom_components/investment_tracker/brand/` so the backend integration can use the same Investment Tracker identity inside Home Assistant.
+
+The repository also includes a reusable logo and icon for project documentation and distribution.
 
 ## Validation
 
@@ -162,6 +178,8 @@ GitHub Actions validate:
 - Home Assistant custom-integration compatibility
 - HACS repository requirements
 
-## Status
+## Current release
 
-**V0.3.0 development.** The direct market-data architecture is implemented on `main` and is intended to remove the requirement to manually configure a Yahoo Finance sensor for every Investment Tracker holding. The release asset will be published through the normal GitHub release workflow after the new architecture has been tested.
+**V0.3.3** is the current stable release.
+
+V0.3.3 includes the direct market-data backend fixes for multi-currency portfolios, including correct FX handling and safer Yahoo ticker fallback behaviour.
