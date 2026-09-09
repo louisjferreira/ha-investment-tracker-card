@@ -31,6 +31,7 @@ OpenFIGI's v3 mapping API supports `ID_ISIN` mappings and has a free unauthentic
 - Expandable holding rows
 - Current price, average purchase price, invested amount and current value detail metrics
 - Historical charts using Home Assistant Recorder history
+- Interactive chart hover values
 - Chart periods: 1D, 1W, 1M, 3M, 6M, 1Y, 5Y and MAX
 - Responsive desktop/mobile layout
 - Home Assistant theme-aware styling
@@ -75,7 +76,6 @@ Each holding should use its ISIN as the primary identifier. The ticker/symbol is
 type: custom:investment-tracker-card
 title: My Investments
 display_currency: GBP
-manual_refresh_limit: 3
 holdings:
   - isin: US22788C1053
     symbol: CRWD
@@ -126,7 +126,7 @@ The lookup may return more than one listing for an ISIN. Select the listing that
 
 The card's **Refresh** button requests a backend refresh of the configured Yahoo Finance symbols. The button shows the remaining daily quota, for example `↻ Refresh 2/3`.
 
-The backend enforces the quota and persists the counter. Automatic daily refreshes do **not** consume the manual quota.
+The backend enforces the quota and persists the counter. Automatic daily refreshes do **not** consume the manual quota. The limit is configured in the backend's `manual_refresh_limit` setting, not in the card YAML.
 
 ### Currency conversion
 
@@ -150,8 +150,8 @@ See `examples/market-data-sensors.yaml` for provider-agnostic examples of price 
 
 ## Validation
 
-The repository includes GitHub Actions for JavaScript syntax validation and HACS plugin validation. Release builds bundle the backend-enabled card into the single JavaScript asset expected by HACS.
+The repository includes GitHub Actions for JavaScript syntax validation, custom-integration validation and HACS plugin validation. Release builds bundle the backend-enabled card into the single JavaScript asset expected by HACS.
 
 ## Status
 
-Backend-enabled test build — OpenFIGI ISIN resolution, daily Yahoo Finance refresh and rate-limited manual refresh are now implemented on the feature branch and ready for Home Assistant testing.
+Backend-enabled test build — OpenFIGI ISIN resolution, daily Yahoo Finance refresh and rate-limited manual refresh are implemented on the feature branch and ready for Home Assistant testing.
