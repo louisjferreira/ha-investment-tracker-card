@@ -9,9 +9,6 @@ BASE_COMMIT = "d89ccdafba119c82a5317b194629175c64407ae3"
 SOURCE = "ha-investment-tracker-card.js"
 OUTPUT = Path("dist/ha-investment-tracker-card.js")
 
-SEARCH_MARKER = "  async searchIsin(index) {"
-SEARCH_END = "\n  selectResult("
-
 SEARCH_REPLACEMENT = '''  async searchIsin(index) {
     const isin = String(this.config.holdings[index]?.isin || '').trim().toUpperCase();
     if (!/^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(isin)) {
@@ -30,9 +27,7 @@ SEARCH_REPLACEMENT = '''  async searchIsin(index) {
       if (!this._search[index].results.length) throw new Error('No security was found for that ISIN.');
     } catch (err) {
       console.warn('Investment Tracker Card ISIN lookup error', err);
-      this._search[index] = {
-        error: err?.message || 'ISIN lookup failed. Install and configure the Investment Tracker backend integration.',
-      };
+      this._search[index] = { error: err?.message || 'ISIN lookup failed. Install and configure the Investment Tracker backend integration.' };
     }
     this.render();
   }'''
@@ -111,29 +106,29 @@ PORTFOLIO_METHOD = '''  async loadPortfolioDay() {
     this._portfolioDayLoading = true;
     this.render();
     try {
-      const end = new Date(), start = new Date(end);
+      const end = new Date();
+      const start = new Date(end);
       start.setDate(start.getDate() - 1);
-      const historyForEntity = async entityId => {
+      const entityHistory = async entityId => {
         const result = await this._hass.callWS({ type: 'history/history_during_period', start_time: start.toISOString(), end_time: end.toISOString(), entity_ids: [entityId], minimal_response: true, no_attributes: true, significant_changes_only: false });
         const states = Array.isArray(result) ? (result[0] || []) : (result?.[entityId] || []);
         return states.map(s => ({ time: new Date(s.last_changed || s.last_updated).getTime(), value: Number.parseFloat(s.state) })).filter(x => Number.isFinite(x.time) && Number.isFinite(x.value)).sort((a, b) => a.time - b.time);
       };
-      const historyForMarket = async symbol => {
+      const marketHistory = async symbol => {
         const result = await this._hass.connection.sendMessagePromise({ type: 'investment_tracker/market_history', symbol, period: '1D' });
         return (result.points || []).map(x => ({ time: Number(x.time), value: Number(x.value) })).filter(x => Number.isFinite(x.time) && Number.isFinite(x.value)).sort((a, b) => a.time - b.time);
       };
-      let currentValue = 0, previousValue = 0;
+      let currentValue = 0;
+      let previousValue = 0;
       for (const item of this.config.holdings) {
         const p = this.position(item);
         if (p.current === null) throw new Error('Missing current market data');
-        const priceHistory = item.price_entity ? await historyForEntity(item.price_entity) : await historyForMarket(item.symbol);
+        const priceHistory = item.price_entity ? await entityHistory(item.price_entity) : await marketHistory(item.symbol);
         const priorPrice = priceHistory.length ? priceHistory[0].value : null;
         const sourceCurrency = item.currency || this.config.display_currency;
         let priorFx = 1;
         if (sourceCurrency !== this.config.display_currency) {
-          const fxHistory = item.fx_rate_entity
-            ? await historyForEntity(item.fx_rate_entity)
-            : await historyForMarket(`${sourceCurrency}${this.config.display_currency}=X`);
+          const fxHistory = item.fx_rate_entity ? await entityHistory(item.fx_rate_entity) : await marketHistory(`${sourceCurrency}${this.config.display_currency}=X`);
           priorFx = fxHistory.length ? fxHistory[0].value : null;
         }
         if (priorPrice === null || priorFx === null || !Number.isFinite(priorFx) || priorFx <= 0) throw new Error('Missing prior market data');
@@ -154,9 +149,6 @@ PORTFOLIO_METHOD = '''  async loadPortfolioDay() {
   }
 '''
 
-HISTORY_MARKER = "  async loadHistory(item, period) {"
-HISTORY_END = "\n  styles() {"
-
 HISTORY_METHOD = '''  async loadHistory(item, period) {
     if (!this._hass || !item) return;
     const id = this.id(item);
@@ -168,7 +160,8 @@ HISTORY_METHOD = '''  async loadHistory(item, period) {
         const result = await this._hass.connection.sendMessagePromise({ type: 'investment_tracker/market_history', symbol: item.symbol, period });
         this._history[id] = { ...(this._history[id] || {}), [period]: result.points || [] };
       } else {
-        const end = new Date(), start = new Date(end);
+        const end = new Date();
+        const start = new Date(end);
         if (period === 'MAX') start.setFullYear(2000, 0, 1); else start.setDate(start.getDate() - (PERIOD_DAYS[period] || 31));
         const result = await this._hass.callWS({ type: 'history/history_during_period', start_time: start.toISOString(), end_time: end.toISOString(), entity_ids: [item.price_entity], minimal_response: true, no_attributes: true, significant_changes_only: false });
         const states = Array.isArray(result) ? (result[0] || []) : (result?.[item.price_entity] || []);
@@ -183,6 +176,12 @@ HISTORY_METHOD = '''  async loadHistory(item, period) {
     this.render();
   }
 '''
+
+
+def replace_method(source: str, marker: str, end_marker: str, replacement: str) -> str:
+    start = source.index(marker)
+    end = source.index(end_marker, start)
+    return source[:start] + replacement + source[end:]
 
 
 def main() -> None:
@@ -213,17 +212,9 @@ def main() -> None:
         "<div class=\"header-actions\"><div class=\"header-value\"><div class=\"total\">${missing ? '—' : this.money(total.current)}</div><div class=\"${this.gainClass(gain)} lifetime-gain\">${missing ? 'Waiting for price / FX data' : `${this.signedMoney(gain)} · ${this.signedPercent(pct)} lifetime`}</div>${this.portfolioDayMarkup()}</div>${this.refreshMarkup()}</div>",
         1,
     )
-    source = source.replace(
-        "</div></ha-card>`; this.bind();",
-        "</div><div class=\"refresh-error\">${this._refreshError ? this.escape(this._refreshError) : ''}</div></ha-card>`; this.bind();",
-        1,
-    )
-    source = source.replace("  async loadPortfolioDay() {", REFRESH_METHODS + PORTFOLIO_METHOD, 1)
-    source = source.replace(HISTORY_MARKER, HISTORY_METHOD, 1)
-    source = source.replace(HISTORY_METHOD + "\n  styles() {", HISTORY_METHOD + "\n  styles() {", 1)
-    start = source.index(SEARCH_MARKER)
-    end = source.index(SEARCH_END, start)
-    source = source[:start] + SEARCH_REPLACEMENT + source[end:]
+    source = source.replace("</div></ha-card>`; this.bind();", "</div><div class=\"refresh-error\">${this._refreshError ? this.escape(this._refreshError) : ''}</div></ha-card>`; this.bind();", 1)
+    source = source.replace("  async loadPortfolioDay() {", REFRESH_METHODS + "\n" + PORTFOLIO_METHOD, 1)
+    source = replace_method(source, "  async loadHistory(item, period) {", "  styles() {", HISTORY_METHOD)
     source = source.replace(
         "  bind() { this.shadowRoot.querySelectorAll('.summary')",
         "  bind() { this.shadowRoot.querySelector('.refresh')?.addEventListener('click', event => { event.stopPropagation(); this.manualRefresh(); }); this.shadowRoot.querySelectorAll('.summary')",
@@ -232,16 +223,6 @@ def main() -> None:
     source = source.replace(
         "  styles() { return `:host{display:block}",
         "  styles() { return `:host{display:block}.header-actions{display:flex;align-items:center;gap:12px}.refresh{border:1px solid var(--divider-color);border-radius:9px;padding:8px 10px;background:var(--secondary-background-color);color:var(--primary-text-color);cursor:pointer;font-size:11px;font-weight:650;white-space:nowrap}.refresh:hover:not(:disabled){background:var(--primary-color);color:var(--text-primary-color,#fff)}.refresh:disabled{opacity:.55;cursor:not-allowed}.refresh span{display:block;font-size:9px;font-weight:500;margin-top:2px}.refresh-error{font-size:11px;color:var(--error-color);margin-bottom:5px}",
-        1,
-    )
-    source = source.replace(
-        '<div class="label">Price entity</div><input data-key="price_entity" value="${this.escape(h.price_entity || \'\')}" placeholder="sensor.apple_price">',
-        '<div class="label">Price entity (optional override)</div><input data-key="price_entity" value="${this.escape(h.price_entity || \'')}" placeholder="Leave blank for automatic market data">',
-        1,
-    )
-    source = source.replace(
-        '<div class="label">FX rate entity (source currency → portfolio currency)</div><input data-key="fx_rate_entity" value="${this.escape(h.fx_rate_entity || \'\')}" placeholder="sensor.usd_gbp">',
-        '<div class="label">FX rate entity (optional override)</div><input data-key="fx_rate_entity" value="${this.escape(h.fx_rate_entity || \'')}" placeholder="Leave blank for automatic FX data">',
         1,
     )
 
