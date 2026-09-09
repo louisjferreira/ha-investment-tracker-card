@@ -11,9 +11,10 @@ jobs:
   syntax:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
         with:
-          node-version: 20
-      - name: Check card JavaScript syntax
-        run: node --check investment-tracker-card.js
+          fetch-depth: 0
+      - name: Build backend-enabled card
+        run: python3 scripts/build_release.py
+      - name: Check generated card JavaScript syntax
+        run: node --check dist/ha-investment-tracker-card.js
