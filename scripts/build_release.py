@@ -32,39 +32,9 @@ SEARCH_REPLACEMENT = '''  async searchIsin(index) {
     this.render();
   }'''
 
-REFRESH_METHODS = '''
-  refreshMarkup() {
-    if (this._refreshLoading) return '<button class="refresh" disabled>↻ Refreshing…</button>';
-    if (!this._refreshStatus) return '<button class="refresh" type="button">↻ Refresh</button>';
-    const remaining = Number(this._refreshStatus.manual_refresh_remaining) || 0;
-    const limit = Number(this._refreshStatus.manual_refresh_limit) || 0;
-    if (!limit) return '<button class="refresh" disabled>↻ Refresh disabled</button>';
-    return `<button class="refresh" type="button" ${remaining <= 0 ? 'disabled' : ''}>↻ Refresh <span>${remaining}/${limit}</span></button>`;
-  }
-  async loadRefreshStatus() {
-    if (!this._hass?.connection) return;
-    try { this._refreshStatus = await this._hass.connection.sendMessagePromise({ type: 'investment_tracker/refresh_status' }); this._refreshError = null; }
-    catch (err) { this._refreshError = 'Backend integration not installed/configured.'; }
-    this.render();
-  }
-  async manualRefresh() {
-    if (!this._hass?.connection || this._refreshLoading) return;
-    const remaining = Number(this._refreshStatus?.manual_refresh_remaining);
-    if (Number.isFinite(remaining) && remaining <= 0) return;
-    this._refreshLoading = true; this._refreshError = null; this.render();
-    try {
-      this._refreshStatus = await this._hass.connection.sendMessagePromise({ type: 'investment_tracker/refresh' });
-      this._lastMarketRequestSignature = '';
-      await this.loadMarketData(true);
-    } catch (err) { this._refreshError = err?.message || 'Market data refresh failed.'; }
-    finally { this._refreshLoading = false; this.render(); }
-  }
-'''
-
 MARKET_PATCH = '''
 const _itOriginalSetConfig = InvestmentTrackerCard.prototype.setConfig;
 const _itOriginalHassSetter = Object.getOwnPropertyDescriptor(InvestmentTrackerCard.prototype, 'hass').set;
-_itOriginalSetConfig;
 InvestmentTrackerCard.prototype.setConfig = function(config) {
   this._marketData = {};
   this._marketErrors = {};
@@ -91,6 +61,32 @@ InvestmentTrackerCard.prototype.fx = function(item) {
   if (!item.fx_rate_entity || !this._hass) return null;
   const value = Number.parseFloat(this._hass.states[item.fx_rate_entity]?.state);
   return Number.isFinite(value) && value > 0 ? value : null;
+};
+InvestmentTrackerCard.prototype.refreshMarkup = function() {
+  if (this._refreshLoading) return '<button class="refresh" disabled>↻ Refreshing…</button>';
+  if (!this._refreshStatus) return '<button class="refresh" type="button">↻ Refresh</button>';
+  const remaining = Number(this._refreshStatus.manual_refresh_remaining) || 0;
+  const limit = Number(this._refreshStatus.manual_refresh_limit) || 0;
+  if (!limit) return '<button class="refresh" disabled>↻ Refresh disabled</button>';
+  return `<button class="refresh" type="button" ${remaining <= 0 ? 'disabled' : ''}>↻ Refresh <span>${remaining}/${limit}</span></button>`;
+};
+InvestmentTrackerCard.prototype.loadRefreshStatus = async function() {
+  if (!this._hass?.connection) return;
+  try { this._refreshStatus = await this._hass.connection.sendMessagePromise({ type: 'investment_tracker/refresh_status' }); this._refreshError = null; }
+  catch (err) { this._refreshError = 'Backend integration not installed/configured.'; }
+  this.render();
+};
+InvestmentTrackerCard.prototype.manualRefresh = async function() {
+  if (!this._hass?.connection || this._refreshLoading) return;
+  const remaining = Number(this._refreshStatus?.manual_refresh_remaining);
+  if (Number.isFinite(remaining) && remaining <= 0) return;
+  this._refreshLoading = true; this._refreshError = null; this.render();
+  try {
+    this._refreshStatus = await this._hass.connection.sendMessagePromise({ type: 'investment_tracker/refresh' });
+    this._lastMarketRequestSignature = '';
+    await this.loadMarketData(true);
+  } catch (err) { this._refreshError = err?.message || 'Market data refresh failed.'; }
+  finally { this._refreshLoading = false; this.render(); }
 };
 InvestmentTrackerCard.prototype.loadMarketData = async function(force = false) {
   if (!this._hass?.connection || !this.config?.holdings?.length) return;
@@ -170,7 +166,7 @@ def main() -> None:
     start = source.index(SEARCH_MARKER)
     end = source.index(SEARCH_END, start)
     source = source[:start] + SEARCH_REPLACEMENT + source[end:]
-    source = source.replace("customElements.define('investment-tracker-card', InvestmentTrackerCard);", REFRESH_METHODS + MARKET_PATCH + "\ncustomElements.define('investment-tracker-card', InvestmentTrackerCard);", 1)
+    source = source.replace("customElements.define('investment-tracker-card', InvestmentTrackerCard);", MARKET_PATCH + "\ncustomElements.define('investment-tracker-card', InvestmentTrackerCard);", 1)
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT.write_text(source, encoding="utf-8")
 
