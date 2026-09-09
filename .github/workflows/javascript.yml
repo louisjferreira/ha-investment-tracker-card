@@ -1,20 +1,21 @@
-name: Validate
+name: JavaScript validation
 
 on:
-  pull_request:
   push:
-    branches:
-      - main
-      - 'feature/**'
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
 
 jobs:
   syntax:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - name: Check out repository with history
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
       - name: Build backend-enabled card
         run: python3 scripts/build_release.py
-      - name: Check generated card JavaScript syntax
+      - name: Check generated JavaScript syntax
         run: node --check dist/ha-investment-tracker-card.js

@@ -1,0 +1,29 @@
+name: Build release asset
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out release tag with history
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 0
+
+      - name: Build backend-enabled card
+        run: |
+          python3 scripts/build_release.py
+          node --check dist/ha-investment-tracker-card.js
+
+      - name: Upload HACS release asset
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: dist/ha-investment-tracker-card.js

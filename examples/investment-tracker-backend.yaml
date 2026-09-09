@@ -1,0 +1,9 @@
+# Add this to configuration.yaml for the server-side Investment Tracker backend.
+# The default 23:15 is intentionally after the US market close in both
+# US daylight and standard time when viewed from Zimbabwe (Africa/Harare).
+# Change it if your portfolio is dominated by another market.
+investment_tracker:
+  daily_refresh_time: "23:15:00"
+  manual_refresh_limit: 3
+  # Optional. OpenFIGI works without a key, but a key raises the mapping rate limit.
+  # openfigi_api_key: "YOUR_OPENFIGI_API_KEY"
