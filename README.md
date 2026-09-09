@@ -2,22 +2,22 @@
 
 ![Investment Tracker Card](assets/example-card.svg)
 
-A polished Home Assistant Lovelace card for tracking stocks and ETFs with automatic market data, multi-currency support, ISIN identification and historical performance charts.
+A polished Home Assistant Lovelace card for tracking **stocks and ETFs** with automatic market data, multi-currency support, ISIN identification and historical performance charts.
 
 ![HACS validation](https://github.com/louisjferreira/ha-investment-tracker-card/actions/workflows/hacs.yml/badge.svg)
 
 ## Features
 
 - 📈 Portfolio invested amount, current value and lifetime gain
-- 💱 Multi-currency portfolio calculations with automatic FX conversion
-- 💹 Automatic current price and market data
+- 💱 Multi-currency portfolios with automatic FX conversion
+- 💹 Automatic current prices and market data
 - 🔎 ISIN-based security identification and listing selection
-- 📊 Historical charts from 1D through MAX
-- 🔄 Rate-limited manual refresh with persistent daily quota
+- 📊 Historical performance charts from 1D through MAX
+- 🔄 Rate-limited manual refresh with a persistent daily quota
 - ⏰ Automatic daily market-data refresh
-- 🏠 Responsive Home Assistant theme-aware UI
+- 🏠 Responsive, Home Assistant theme-aware UI
 - 🧩 HACS distribution
-- 🛠️ Optional legacy Home Assistant price/FX entity overrides
+- 🛠️ Optional legacy Home Assistant price and FX entity overrides
 
 ## See it in action
 
@@ -29,22 +29,28 @@ A polished Home Assistant Lovelace card for tracking stocks and ETFs with automa
 
 ![Investment Tracker features](assets/example-features.svg)
 
-The card is designed to keep the important information visible at a glance while allowing each holding to be expanded for more detail.
+The card keeps the important portfolio information visible at a glance while allowing individual holdings to be expanded for more detail.
 
 ## Installation
 
-The project currently has two parts:
+The project has two components:
 
 1. **Lovelace card** — installed through HACS.
-2. **Home Assistant backend** — copied into `custom_components/investment_tracker/` because this repository is distributed by HACS as a frontend repository.
+2. **Home Assistant backend** — installed manually in `custom_components/investment_tracker/`.
 
-Install the latest card release through HACS, then copy the complete `custom_components/investment_tracker/` directory from this repository to:
+### 1. Install the card through HACS
+
+Install the latest **Investment Tracker Card** release through HACS.
+
+### 2. Install the backend
+
+Copy the complete `custom_components/investment_tracker/` directory from this repository to:
 
 ```text
 /config/custom_components/investment_tracker/
 ```
 
-Add the backend configuration to `configuration.yaml`:
+Then add the backend configuration to `configuration.yaml`:
 
 ```yaml
 investment_tracker:
@@ -56,11 +62,13 @@ investment_tracker:
 
 Restart Home Assistant after installing or updating the backend.
 
+> **Important:** The Investment Tracker Card does **not** require the `iprak/yahoofinance` Home Assistant integration. Market data is retrieved directly by the Investment Tracker backend. If you already use `iprak/yahoofinance` for other Home Assistant entities, it can remain installed independently.
+
 ## Automatic market data
 
-The card no longer requires a separate Yahoo Finance Home Assistant sensor for every holding.
+The card can retrieve current prices, FX rates and historical market data without requiring a separate Home Assistant market-data sensor for each holding.
 
-When a holding has an ISIN and a provider symbol, the Investment Tracker backend can fetch current market data directly and return it to the card. The existing Yahoo Finance integration used for Devere holdings can remain completely unchanged.
+For holdings with an ISIN and provider symbol, the Investment Tracker backend handles the market-data lookup server-side.
 
 The normal flow is:
 
@@ -75,20 +83,12 @@ Investment Tracker backend
   ↓
 Yahoo Finance market data
   ↓
-Price + FX returned directly to the card
+Price + FX + history returned to the card
 ```
 
-There is therefore **no need to add `CRWD`, `PLTR`, `AMZN`, etc. to the separate `yahoofinance:` YAML configuration just to use this card**.
+There is therefore **no need to add `CRWD`, `PLTR`, `AMZN`, etc. to a separate `yahoofinance:` YAML configuration just to use this card**.
 
-The card still accepts `price_entity` and `fx_rate_entity` as optional overrides, so existing configurations remain usable.
-
-## Backend configuration
-
-- `daily_refresh_time` — local Home Assistant time used for the automatic cache refresh. Default: `23:15:00`.
-- `manual_refresh_limit` — maximum manual refresh requests per day. Default: `3`.
-- `openfigi_api_key` — optional OpenFIGI API key for higher mapping limits.
-
-The manual quota is persisted in Home Assistant storage and automatic refreshes do not consume it.
+The card still supports `price_entity` and `fx_rate_entity` as optional overrides, so existing or legacy configurations remain usable.
 
 ## Add the card
 
@@ -108,40 +108,50 @@ holdings:
     currency: USD
 ```
 
-Notice that there is **no `price_entity` and no `fx_rate_entity`** in the example. Those are optional overrides; the backend supplies the market data automatically.
+Notice that there is **no `price_entity` and no `fx_rate_entity`** in this example. The backend supplies the market data automatically.
 
-For a legacy/provider-specific setup they can still be supplied:
+### Legacy entity-based configuration
+
+If you prefer to use existing Home Assistant entities, or already have a provider-specific setup, the card can still use them:
 
 ```yaml
 price_entity: sensor.yahoofinance_crwd
 fx_rate_entity: sensor.usd_gbp
 ```
 
+These entity overrides are optional and are not required for the normal automatic market-data flow.
+
 ## ISIN lookup
 
-Enter the 12-character ISIN in the visual editor and choose **Search ISIN**. The browser sends the request to the Home Assistant backend, which queries OpenFIGI server-side.
+Enter the 12-character ISIN in the visual editor and choose **Search ISIN**.
 
-OpenFIGI may return multiple listings for the same security. Select the listing matching the security and market you actually own. Currency remains an explicit holding setting.
+The browser sends the request to the Home Assistant backend, which queries OpenFIGI server-side. OpenFIGI may return multiple listings for the same security, so select the listing that matches the security and market you actually own.
 
-## Market-data provider
+The holding currency remains an explicit setting. It is not automatically changed simply because a different exchange listing is selected.
 
-The backend currently uses Yahoo Finance's public chart market-data endpoint server-side. It does **not** depend on the `iprak/yahoofinance` Home Assistant integration for new Investment Tracker holdings.
+## Market data
 
-This is intentional: the card's market-data interface is provider-agnostic, while the current backend provider is Yahoo Finance. A future provider can be added behind the same interface without changing the card configuration.
+The Investment Tracker backend currently uses Yahoo Finance's public chart market-data endpoint directly from Home Assistant.
 
-The backend caches current data briefly to avoid unnecessary requests. Manual refresh invalidates the cache and is subject to the daily quota. Automatic refresh does not consume the manual quota.
+The card itself is **provider-agnostic**. Yahoo Finance is the current backend provider, but the market-data interface is designed so another provider could be added later without changing the card configuration.
+
+The backend briefly caches current market data to avoid unnecessary requests. Manual refresh invalidates the cache and uses the configured daily manual-refresh quota. Automatic daily refreshes do not consume the manual quota.
 
 ## Currency conversion
 
-`display_currency` controls the portfolio currency. Each holding has its own `currency`.
+`display_currency` controls the currency used for the portfolio totals and values shown by the card.
 
-For automatic market data, the backend requests the corresponding Yahoo Finance FX pair when the holding currency differs from the portfolio currency. For example, a USD holding in a GBP portfolio uses the USD → GBP FX rate automatically.
+Each holding has its own `currency` setting. When automatic market data is used, the backend obtains the required FX rate whenever the holding currency differs from the portfolio currency.
+
+For example, a USD holding in a GBP portfolio uses the USD → GBP exchange rate automatically.
 
 For legacy entity-based configurations, `fx_rate_entity` should represent the value of **1 unit of the holding currency in the portfolio currency**.
 
 ## Historical charts
 
-When automatic market data is used, historical chart data is also fetched by the Investment Tracker backend. The supported periods are:
+When automatic market data is used, historical chart data is fetched by the Investment Tracker backend.
+
+Supported periods are:
 
 - 1D
 - 1W
@@ -156,19 +166,31 @@ Legacy entity-based holdings continue to use Home Assistant Recorder history.
 
 ## Manual refresh
 
-The card's **Refresh** button shows the remaining daily manual quota, for example:
+The card's **Refresh** button shows the remaining daily manual-refresh quota, for example:
 
 ```text
 ↻ Refresh 2/3
 ```
 
-The backend persists the counter. Automatic daily refreshes do not consume the manual quota.
+The backend persists the counter in Home Assistant storage. Automatic daily refreshes do not consume the manual quota.
+
+## Backend configuration
+
+| Option | Description | Default |
+|---|---|---|
+| `daily_refresh_time` | Local Home Assistant time for the automatic market-data refresh | `23:15:00` |
+| `manual_refresh_limit` | Maximum manual refresh requests per day | `3` |
+| `openfigi_api_key` | Optional OpenFIGI API key for higher mapping limits | Not set |
 
 ## Branding
 
-The project includes Home Assistant local brand assets under `custom_components/investment_tracker/brand/` so the backend integration can use the same Investment Tracker identity inside Home Assistant.
+The project includes dedicated Investment Tracker branding for Home Assistant and project documentation, including local brand assets under:
 
-The repository also includes a reusable logo and icon for project documentation and distribution.
+```text
+custom_components/investment_tracker/brand/
+```
+
+A reusable project logo and icon are also included in the repository.
 
 ## Validation
 
@@ -182,4 +204,4 @@ GitHub Actions validate:
 
 **V0.3.3** is the current stable release.
 
-V0.3.3 includes the direct market-data backend fixes for multi-currency portfolios, including correct FX handling and safer Yahoo ticker fallback behaviour.
+V0.3.3 includes the direct market-data backend fixes for multi-currency portfolios, including correct FX handling and safer Yahoo Finance ticker fallback behaviour.
