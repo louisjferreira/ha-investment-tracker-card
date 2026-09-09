@@ -58,6 +58,7 @@ class MarketDataManager:
         self.session = async_get_clientsession(hass)
         self.cache: dict[str, tuple[float, dict[str, Any]]] = {}
         self.symbols: set[str] = set()
+        self.resolved_symbols: dict[str, str] = {}
         self._lock = asyncio.Lock()
 
     def _cache_key(self, symbol: str, source_currency: str, display_currency: str) -> str:
@@ -66,6 +67,54 @@ class MarketDataManager:
     @staticmethod
     def _fx_symbol(source_currency: str, display_currency: str) -> str:
         return f"{source_currency.upper()}{display_currency.upper()}=X"
+
+    @staticmethod
+    def _symbol_candidates(symbol: str, source_currency: str | None = None) -> list[str]:
+        """Return Yahoo symbols to try, preferring the unqualified ticker."""
+        symbol = symbol.strip().upper()
+        if "." in symbol or "=" in symbol:
+            return [symbol]
+        suffixes = {
+            "GBP": [".L"],
+            "EUR": [".DE", ".PA", ".AS", ".MI"],
+            "CHF": [".SW"],
+            "SEK": [".ST"],
+            "NOK": [".OL"],
+            "DKK": [".CO"],
+            "PLN": [".WA"],
+            "HKD": [".HK"],
+            "JPY": [".T"],
+            "AUD": [".AX"],
+            "CAD": [".TO"],
+            "NZD": [".NZ"],
+            "SGD": [".SI"],
+            "ZAR": [".JO"],
+        }
+        return [symbol, *(f"{symbol}{suffix}" for suffix in suffixes.get((source_currency or "").upper(), []))]
+
+    @staticmethod
+    def _meta_currency(result: dict[str, Any]) -> str:
+        return str((result.get("meta") or {}).get("currency") or "").upper()
+
+    @staticmethod
+    def _currency_matches(result: dict[str, Any], source_currency: str | None) -> bool:
+        if not source_currency:
+            return True
+        expected = source_currency.upper()
+        actual = MarketDataManager._meta_currency(result)
+        if not actual:
+            return True
+        # Yahoo uses GBp/GBX for London prices quoted in pence.
+        if expected == "GBP" and actual in {"GBP", "GBP".upper(), "GBX", "GBP".replace("GBP", "GBP")}:
+            return True
+        if expected == "GBP" and actual == "GBP":
+            return True
+        return actual == expected
+
+    @staticmethod
+    def _price_scale(result: dict[str, Any]) -> float:
+        currency = str((result.get("meta") or {}).get("currency") or "").upper()
+        return 0.01 if currency in {"GBX", "GBp".upper()} else 1.0
 
     async def _chart(self, symbol: str, range_: str = "5d", interval: str = "1d") -> dict[str, Any]:
         symbol = symbol.strip().upper()
@@ -88,26 +137,50 @@ class MarketDataManager:
             raise RuntimeError(error.get("description") or f"No market data returned for {symbol}.")
         return result
 
+    async def _chart_with_fallback(
+        self, symbol: str, source_currency: str | None = None, range_: str = "5d", interval: str = "1d"
+    ) -> tuple[dict[str, Any], str]:
+        original = symbol.strip().upper()
+        resolved = self.resolved_symbols.get(original)
+        candidates = [resolved] if resolved else self._symbol_candidates(original, source_currency)
+        last_error: Exception | None = None
+        for candidate in candidates:
+            try:
+                result = await self._chart(candidate, range_, interval)
+                if not self._currency_matches(result, source_currency):
+                    raise RuntimeError(
+                        f"Yahoo returned {self._meta_currency(result) or 'an unknown currency'} for {candidate}; "
+                        f"expected {source_currency}."
+                    )
+                self.resolved_symbols[original] = candidate
+                return result, candidate
+            except Exception as err:  # noqa: BLE001
+                last_error = err
+                _LOGGER.debug("Yahoo symbol %s failed for %s: %s", candidate, original, err)
+        raise RuntimeError(str(last_error) if last_error else f"No market data returned for {original}.")
+
     @staticmethod
     def _latest(result: dict[str, Any]) -> float | None:
+        scale = MarketDataManager._price_scale(result)
         meta = result.get("meta") or {}
         for key in ("regularMarketPrice", "previousClose"):
             value = meta.get(key)
             if isinstance(value, (int, float)):
-                return float(value)
+                return float(value) * scale
         quote_data = (((result.get("indicators") or {}).get("quote") or [None])[0] or {})
         closes = [value for value in (quote_data.get("close") or []) if isinstance(value, (int, float))]
-        return float(closes[-1]) if closes else None
+        return float(closes[-1]) * scale if closes else None
 
     @staticmethod
     def _history(result: dict[str, Any]) -> list[dict[str, Any]]:
+        scale = MarketDataManager._price_scale(result)
         timestamps = result.get("timestamp") or []
         quote_data = (((result.get("indicators") or {}).get("quote") or [None])[0] or {})
         closes = quote_data.get("close") or []
         points: list[dict[str, Any]] = []
         for timestamp, close in zip(timestamps, closes):
             if isinstance(timestamp, (int, float)) and isinstance(close, (int, float)):
-                points.append({"time": int(timestamp) * 1000, "value": float(close)})
+                points.append({"time": int(timestamp) * 1000, "value": float(close) * scale})
         return points
 
     async def async_get(self, symbol: str, source_currency: str, display_currency: str, force: bool = False) -> dict[str, Any]:
@@ -125,7 +198,7 @@ class MarketDataManager:
             now = dt_util.utcnow().timestamp()
             if cached and not force and now - cached[0] < CACHE_SECONDS:
                 return cached[1]
-            result = await self._chart(symbol, "5d", "1d")
+            result, resolved_symbol = await self._chart_with_fallback(symbol, source_currency, "5d", "1d")
             price = self._latest(result)
             if price is None:
                 raise RuntimeError(f"No current price is available for {symbol}.")
@@ -137,9 +210,9 @@ class MarketDataManager:
                 if fx <= 0:
                     raise RuntimeError(f"No FX rate is available for {source_currency} → {display_currency}.")
             data = {
-                "symbol": symbol,
+                "symbol": resolved_symbol,
                 "price": price,
-                "currency": meta.get("currency") or source_currency,
+                "currency": source_currency,
                 "exchange": meta.get("exchangeName") or meta.get("fullExchangeName"),
                 "fx": fx,
                 "source_currency": source_currency,
@@ -157,7 +230,8 @@ class MarketDataManager:
             "5Y": ("5y", "1wk"), "MAX": ("max", "1mo"),
         }
         range_, interval = ranges.get(period, ("1mo", "1d"))
-        result = await self._chart(symbol, range_, interval)
+        resolved = self.resolved_symbols.get(symbol.strip().upper())
+        result, _ = await self._chart_with_fallback(symbol, None if resolved else "GBP", range_, interval)
         return self._history(result)
 
     async def async_refresh_all(self) -> None:
