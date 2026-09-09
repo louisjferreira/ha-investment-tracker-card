@@ -1,11 +1,11 @@
 {
   "domain": "investment_tracker",
   "name": "Investment Tracker",
-  "version": "0.2.0",
-  "documentation": "https://github.com/louisjferreira/ha-investment-tracker-card",
-  "issue_tracker": "https://github.com/louisjferreira/ha-investment-tracker-card/issues",
   "codeowners": ["@louisjferreira"],
   "config_flow": false,
+  "documentation": "https://github.com/louisjferreira/ha-investment-tracker-card",
   "integration_type": "service",
-  "iot_class": "cloud_polling"
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/louisjferreira/ha-investment-tracker-card/issues",
+  "version": "0.2.0"
 }
